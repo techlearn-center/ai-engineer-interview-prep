@@ -79,11 +79,14 @@ pytest -v
 
 ## Learning Guides (LEARN_FIRST.md)
 
-Some topics need conceptual understanding before you start coding. Read these first:
+Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before you code:
 
 | Topic | Guide | What you'll learn |
 |-------|-------|-------------------|
+| Python Fundamentals | `01_python_fundamentals/LEARN_FIRST.md` | Dicts, two-sum pattern, comprehensions, generators, decorators |
+| NumPy & Pandas | `02_numpy_pandas/LEARN_FIRST.md` | Arrays, vectorization, broadcasting, DataFrames, groupby |
 | ML from Scratch | `03_ml_from_scratch/LEARN_FIRST.md` | Gradient descent, loss functions, how training works |
+| Data Processing | `04_data_processing/LEARN_FIRST.md` | Tokenization, TF-IDF, regex, feature engineering |
 | APIs & FastAPI | `05_api_serving/LEARN_FIRST.md` | HTTP basics, REST, Pydantic, building endpoints |
 | LLM & RAG | `06_llm_rag_patterns/LEARN_FIRST.md` | Embeddings, vector stores, cosine similarity, RAG pipeline |
 | GCP for AI | `07_gcp_ai_platform/LEARN_FIRST.md` | GCS, BigQuery, Vertex AI, Cloud Run, IAM, architecture |
