@@ -70,22 +70,43 @@ pytest -v
 |---------|------|--------|
 | RAG Pipeline | `p1_rag_pipeline.py` | vector store, similarity search, prompt building, chat messages |
 
+### 07 - GCP AI Platform
+| Problem | File | Topics |
+|---------|------|--------|
+| GCS Operations | `p1_gcs_operations.py` | upload/download JSON & CSV, list blobs, organize training data |
+| BigQuery & BQML | `p2_bigquery_ml.py` | SQL queries, feature stats, BigQuery ML CREATE MODEL |
+| Vertex AI Pipeline | `p3_vertex_ai_pipeline.py` | training config, model registry, endpoints, A/B testing, pipeline design |
+
+## Learning Guides (LEARN_FIRST.md)
+
+Some topics need conceptual understanding before you start coding. Read these first:
+
+| Topic | Guide | What you'll learn |
+|-------|-------|-------------------|
+| ML from Scratch | `03_ml_from_scratch/LEARN_FIRST.md` | Gradient descent, loss functions, how training works |
+| APIs & FastAPI | `05_api_serving/LEARN_FIRST.md` | HTTP basics, REST, Pydantic, building endpoints |
+| LLM & RAG | `06_llm_rag_patterns/LEARN_FIRST.md` | Embeddings, vector stores, cosine similarity, RAG pipeline |
+| GCP for AI | `07_gcp_ai_platform/LEARN_FIRST.md` | GCS, BigQuery, Vertex AI, Cloud Run, IAM, architecture |
+
 ## Recommended Order (2-Day Plan)
 
-### Day 1: Foundations
+### Day 1: Foundations + GCP Concepts
 1. `01_python_fundamentals/p1_data_structures.py`
 2. `01_python_fundamentals/p2_comprehensions_generators.py`
 3. `01_python_fundamentals/p3_decorators_closures.py`
 4. `02_numpy_pandas/p1_numpy_operations.py`
 5. `02_numpy_pandas/p2_pandas_wrangling.py`
+6. Read `07_gcp_ai_platform/LEARN_FIRST.md` (evening study)
 
-### Day 2: ML & AI-Specific
+### Day 2: ML, AI & Cloud
 1. `03_ml_from_scratch/p1_linear_regression.py`
 2. `03_ml_from_scratch/p2_logistic_regression.py`
-3. `03_ml_from_scratch/p3_kmeans.py`
-4. `04_data_processing/p1_text_preprocessing.py`
-5. `05_api_serving/p1_fastapi_inference.py`
-6. `06_llm_rag_patterns/p1_rag_pipeline.py`
+3. `04_data_processing/p1_text_preprocessing.py`
+4. `05_api_serving/p1_fastapi_inference.py` (read LEARN_FIRST.md first)
+5. `06_llm_rag_patterns/p1_rag_pipeline.py` (read LEARN_FIRST.md first)
+6. `07_gcp_ai_platform/p1_gcs_operations.py`
+7. `07_gcp_ai_platform/p2_bigquery_ml.py`
+8. `07_gcp_ai_platform/p3_vertex_ai_pipeline.py`
 
 ## Tips for the Interview
 
@@ -96,6 +117,20 @@ pytest -v
 - **Know your complexity** - be ready to discuss Big-O
 - **Test as you go** - run pytest frequently
 
+## Each Topic Folder Contains
+
+```
+topic_folder/
+  LEARN_FIRST.md       <-- Teaches the concept from scratch (read first if new to topic)
+  HINTS.md             <-- Step-by-step hints (read before looking at solutions)
+  p1_xxx.py            <-- Problem file (you write code here)
+  tests/test_p1_xxx.py <-- Tests (run pytest to check your answers)
+  solutions/s1_xxx.py  <-- Full working solutions (last resort)
+```
+
 ## Solutions
 
-Try to solve each problem yourself first! If you get stuck, the test files show the expected behavior. You can also ask Claude Code for hints.
+Try to solve each problem yourself first! If you get stuck:
+1. Read the HINTS.md file for the topic
+2. Check the test files to understand expected behavior
+3. Look at solutions/ only after giving it a real attempt
