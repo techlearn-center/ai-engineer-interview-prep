@@ -131,6 +131,16 @@ topic_folder/
   solutions/s1_xxx.py  <-- Full working solutions (last resort)
 ```
 
+## Cheatsheets (Quick Reference)
+
+Review these the night before or right before your interview:
+
+| Cheatsheet | What's in it |
+|-----------|-------------|
+| `cheatsheets/python-syntax.md` | All Python syntax: data structures, comprehensions, classes, regex, NumPy, Pandas |
+| `cheatsheets/ml-ai-glossary.md` | 150+ terms: ML concepts, model types, metrics, LLM/RAG, MLOps, math |
+| `cheatsheets/gcp-cheatsheet.md` | GCP services, CLI commands, Python SDK patterns, architecture diagrams |
+
 ## Solutions
 
 Try to solve each problem yourself first! If you get stuck:
