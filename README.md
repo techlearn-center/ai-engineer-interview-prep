@@ -77,6 +77,12 @@ pytest -v
 | BigQuery & BQML | `p2_bigquery_ml.py` | SQL queries, feature stats, BigQuery ML CREATE MODEL |
 | Vertex AI Pipeline | `p3_vertex_ai_pipeline.py` | training config, model registry, endpoints, A/B testing, pipeline design |
 
+### 08 - LangChain (Zero to Hero)
+| Problem | File | Topics |
+|---------|------|--------|
+| LangChain Basics | `p1_langchain_basics.py` | PromptTemplate, ChatPromptTemplate, Chains, OutputParsers, Memory |
+| RAG Application | `p2_rag_application.py` | TextSplitter, VectorStore, Retriever, RAGChain, DocumentLoaders |
+
 ## Learning Guides (LEARN_FIRST.md)
 
 Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before you code:
@@ -90,6 +96,7 @@ Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before y
 | APIs & FastAPI | `05_api_serving/LEARN_FIRST.md` | HTTP basics, REST, Pydantic, building endpoints |
 | LLM & RAG | `06_llm_rag_patterns/LEARN_FIRST.md` | Embeddings, vector stores, cosine similarity, RAG pipeline |
 | GCP for AI | `07_gcp_ai_platform/LEARN_FIRST.md` | GCS, BigQuery, Vertex AI, Cloud Run, IAM, architecture |
+| LangChain | `08_langchain/LEARN_FIRST.md` | LangChain, LangGraph, LangSmith - complete zero-to-hero guide |
 
 ## Recommended Order (2-Day Plan)
 
