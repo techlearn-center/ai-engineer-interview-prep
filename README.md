@@ -83,6 +83,12 @@ pytest -v
 | LangChain Basics | `p1_langchain_basics.py` | PromptTemplate, ChatPromptTemplate, Chains, OutputParsers, Memory |
 | RAG Application | `p2_rag_application.py` | TextSplitter, VectorStore, Retriever, RAGChain, DocumentLoaders |
 
+### 09 - MCP (Model Context Protocol)
+| Problem | File | Topics |
+|---------|------|--------|
+| MCP Basics | `p1_mcp_basics.py` | ToolDefinition, ResourceDefinition, JSON-RPC, ToolRegistry, ResourceStore |
+| MCP Server | `p2_mcp_server.py` | Complete MCP server: tools, resources, prompts, routing |
+
 ## Learning Guides (LEARN_FIRST.md)
 
 Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before you code:
@@ -97,6 +103,7 @@ Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before y
 | LLM & RAG | `06_llm_rag_patterns/LEARN_FIRST.md` | Embeddings, vector stores, cosine similarity, RAG pipeline |
 | GCP for AI | `07_gcp_ai_platform/LEARN_FIRST.md` | GCS, BigQuery, Vertex AI, Cloud Run, IAM, architecture |
 | LangChain | `08_langchain/LEARN_FIRST.md` | LangChain, LangGraph, LangSmith - complete zero-to-hero guide |
+| MCP | `09_mcp/LEARN_FIRST.md` | Model Context Protocol - connecting AI to tools and data |
 
 ## Recommended Order (2-Day Plan)
 
