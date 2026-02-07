@@ -1,0 +1,52 @@
+{
+  "database": {
+    "primary": {
+      "host": "db-primary.example.com",
+      "port": 5432,
+      "name": "production_db",
+      "credentials": {
+        "username": "app_user",
+        "password_env": "DB_PASSWORD"
+      }
+    },
+    "replica": {
+      "host": "db-replica.example.com",
+      "port": 5432,
+      "name": "production_db"
+    }
+  },
+  "cache": {
+    "redis": {
+      "host": "redis.example.com",
+      "port": 6379,
+      "ttl_seconds": 3600
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "handlers": {
+      "console": {
+        "enabled": true
+      },
+      "file": {
+        "enabled": true,
+        "path": "/var/log/app.log",
+        "max_size_mb": 100,
+        "backup_count": 5
+      }
+    }
+  },
+  "ml_models": {
+    "embedding": {
+      "name": "text-embedding-3-small",
+      "dimension": 1536,
+      "batch_size": 100
+    },
+    "classifier": {
+      "name": "custom-classifier-v2",
+      "path": "/models/classifier.pkl",
+      "threshold": 0.75
+    }
+  }
+}

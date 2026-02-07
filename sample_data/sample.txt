@@ -1,0 +1,5 @@
+Hello, World!
+This is a sample text file.
+It has multiple lines.
+You can practice reading this file.
+Each line contains different text.

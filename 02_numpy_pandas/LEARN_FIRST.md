@@ -314,6 +314,356 @@ df["normalized_score"] = (df["score"] - df["score"].mean()) / df["score"].std()
 
 ---
 
+## Part C: Pandas Deep Dive (Interview Focus)
+
+The sections above cover basics. This section goes deeper into patterns you'll see in interviews.
+
+### 13. Reading Files (All Formats)
+
+```python
+import pandas as pd
+
+# CSV - most common
+df = pd.read_csv("data.csv")
+df = pd.read_csv("data.csv", sep=";")              # Custom separator
+df = pd.read_csv("data.csv", usecols=["name", "age"])  # Only certain columns
+df = pd.read_csv("data.csv", nrows=100)            # First 100 rows only
+df = pd.read_csv("data.csv", skiprows=5)           # Skip first 5 rows
+df = pd.read_csv("data.csv", na_values=["N/A", ""])  # Custom NA values
+
+# JSON
+df = pd.read_json("data.json")
+df = pd.read_json("data.json", orient="records")   # List of dicts
+
+# Excel
+df = pd.read_excel("data.xlsx", sheet_name="Sheet1")
+
+# From a URL (works with CSV, JSON, etc.)
+df = pd.read_csv("https://example.com/data.csv")
+
+# Writing files
+df.to_csv("output.csv", index=False)               # Don't include row numbers
+df.to_json("output.json", orient="records")
+df.to_excel("output.xlsx", index=False)
+```
+
+---
+
+### 14. Data Types & Conversion
+
+```python
+# Check types
+df.dtypes
+df["column"].dtype
+
+# Convert types
+df["age"] = df["age"].astype(int)
+df["price"] = df["price"].astype(float)
+df["is_active"] = df["is_active"].astype(bool)
+
+# Parse dates (VERY common in interviews)
+df["date"] = pd.to_datetime(df["date"])
+df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d")
+df["date"] = pd.to_datetime(df["date"], errors="coerce")  # Invalid -> NaT
+
+# Extract from dates
+df["year"] = df["date"].dt.year
+df["month"] = df["date"].dt.month
+df["day"] = df["date"].dt.day
+df["weekday"] = df["date"].dt.dayofweek  # 0=Monday
+df["quarter"] = df["date"].dt.quarter
+
+# Categories (more memory efficient for low-cardinality columns)
+df["status"] = df["status"].astype("category")
+```
+
+---
+
+### 15. String Operations
+
+```python
+# String accessor: .str
+df["name"].str.lower()              # Lowercase
+df["name"].str.upper()              # Uppercase
+df["name"].str.strip()              # Remove whitespace
+df["name"].str.replace("old", "new")
+df["name"].str.contains("pattern")  # Returns boolean Series
+df["name"].str.startswith("A")
+df["name"].str.split(" ")           # Split into lists
+df["name"].str.len()                # String length
+
+# Extract patterns with regex
+df["email"].str.extract(r"@(.+)")   # Extract domain
+
+# Combine columns
+df["full_name"] = df["first"] + " " + df["last"]
+
+# Example: Clean and standardize names
+df["name"] = df["name"].str.strip().str.title()
+```
+
+---
+
+### 16. Handling Missing Data (Critical!)
+
+```python
+# Detecting missing values
+df.isnull()                     # Boolean DataFrame
+df.isnull().sum()               # Count per column
+df.isnull().sum().sum()         # Total missing
+df.notnull()                    # Opposite of isnull
+
+# Dropping missing values
+df.dropna()                     # Drop rows with ANY missing
+df.dropna(how="all")            # Drop rows where ALL are missing
+df.dropna(subset=["name"])      # Only check specific columns
+df.dropna(thresh=3)             # Keep rows with at least 3 non-null
+
+# Filling missing values
+df.fillna(0)                    # Fill all with 0
+df["age"].fillna(df["age"].mean())  # Fill with column mean
+df["age"].fillna(df["age"].median())  # Fill with median (better for skewed)
+df.fillna(method="ffill")       # Forward fill (use previous value)
+df.fillna(method="bfill")       # Backward fill
+
+# Interpolation (for time series)
+df["value"].interpolate()       # Linear interpolation
+df["value"].interpolate(method="time")  # Time-based
+
+# Replace specific values
+df.replace({"N/A": None, "": None})
+df["status"].replace({"active": 1, "inactive": 0})
+```
+
+---
+
+### 17. GroupBy Advanced
+
+```python
+# Basic pattern: split-apply-combine
+df.groupby("category")["value"].sum()
+
+# Multiple aggregations on same column
+df.groupby("category")["value"].agg(["sum", "mean", "count", "std"])
+
+# Different aggregations for different columns
+df.groupby("category").agg({
+    "value": "sum",
+    "quantity": "mean",
+    "order_id": "count"
+})
+
+# Named aggregations (cleaner output)
+df.groupby("category").agg(
+    total_value=("value", "sum"),
+    avg_quantity=("quantity", "mean"),
+    order_count=("order_id", "count")
+)
+
+# Apply custom function
+def range_func(x):
+    return x.max() - x.min()
+
+df.groupby("category")["value"].apply(range_func)
+
+# Transform (returns same shape as original)
+df["category_mean"] = df.groupby("category")["value"].transform("mean")
+
+# Filter groups
+df.groupby("category").filter(lambda x: x["value"].sum() > 1000)
+
+# Multiple group by columns
+df.groupby(["region", "category"])["sales"].sum().reset_index()
+```
+
+---
+
+### 18. Pivot Tables & Reshaping
+
+```python
+# Pivot table (like Excel)
+pd.pivot_table(
+    df,
+    values="sales",           # What to aggregate
+    index="region",           # Rows
+    columns="product",        # Columns
+    aggfunc="sum",            # How to aggregate
+    fill_value=0              # Fill missing with 0
+)
+
+# Multiple aggregations
+pd.pivot_table(
+    df,
+    values="sales",
+    index="region",
+    columns="product",
+    aggfunc=["sum", "mean", "count"]
+)
+
+# Melt (opposite of pivot - wide to long)
+df_long = pd.melt(
+    df,
+    id_vars=["name"],             # Keep these as-is
+    value_vars=["score_1", "score_2"],  # Unpivot these
+    var_name="test",              # Name for the variable column
+    value_name="score"            # Name for the value column
+)
+
+# Stack and unstack
+df.stack()        # Columns to rows
+df.unstack()      # Rows to columns
+```
+
+---
+
+### 19. Merging & Joining
+
+```python
+# Merge (like SQL JOIN)
+df = pd.merge(
+    df1,
+    df2,
+    on="key",                    # Column to join on
+    how="inner"                  # inner, left, right, outer
+)
+
+# Different column names
+df = pd.merge(df1, df2, left_on="id", right_on="user_id")
+
+# Multiple keys
+df = pd.merge(df1, df2, on=["key1", "key2"])
+
+# Concatenate (stack DataFrames)
+df = pd.concat([df1, df2])                    # Stack vertically
+df = pd.concat([df1, df2], ignore_index=True) # Reset index
+df = pd.concat([df1, df2], axis=1)            # Stack horizontally
+
+# Join (merge on index)
+df = df1.join(df2, how="left")
+```
+
+---
+
+### 20. Window Functions (Rolling & Expanding)
+
+```python
+# Rolling window (moving average, etc.)
+df["rolling_mean"] = df["value"].rolling(window=7).mean()
+df["rolling_sum"] = df["value"].rolling(window=7).sum()
+df["rolling_std"] = df["value"].rolling(window=7).std()
+
+# Min periods (handle start of series)
+df["rolling_mean"] = df["value"].rolling(window=7, min_periods=1).mean()
+
+# Expanding window (cumulative)
+df["cumsum"] = df["value"].expanding().sum()
+df["cummax"] = df["value"].expanding().max()
+
+# Shift (lag/lead)
+df["prev_value"] = df["value"].shift(1)     # Previous row
+df["next_value"] = df["value"].shift(-1)    # Next row
+
+# Percent change
+df["pct_change"] = df["value"].pct_change()
+
+# Rank
+df["rank"] = df["value"].rank()
+df["rank"] = df["value"].rank(ascending=False)
+
+# Difference from previous
+df["diff"] = df["value"].diff()
+```
+
+---
+
+### 21. Common Interview Patterns
+
+**Pattern 1: Calculate running total per group**
+```python
+df["running_total"] = df.groupby("category")["value"].cumsum()
+```
+
+**Pattern 2: Find top N per group**
+```python
+df.groupby("category").apply(
+    lambda x: x.nlargest(3, "value")
+).reset_index(drop=True)
+```
+
+**Pattern 3: Flag first/last in group**
+```python
+df["is_first"] = ~df.duplicated("customer_id")
+df["is_last"] = ~df.duplicated("customer_id", keep="last")
+```
+
+**Pattern 4: Calculate percentage within group**
+```python
+df["pct_of_group"] = df["value"] / df.groupby("category")["value"].transform("sum")
+```
+
+**Pattern 5: Fill missing with group mean**
+```python
+df["value"] = df.groupby("category")["value"].transform(
+    lambda x: x.fillna(x.mean())
+)
+```
+
+**Pattern 6: Find consecutive duplicates**
+```python
+df["is_consecutive_dup"] = df["value"] == df["value"].shift(1)
+```
+
+---
+
+### 22. Performance Tips
+
+```python
+# Use vectorized operations (FAST)
+df["total"] = df["price"] * df["quantity"]  # Good
+
+# Avoid apply with lambdas when possible (SLOW)
+df["total"] = df.apply(lambda row: row["price"] * row["quantity"], axis=1)  # Bad
+
+# Use query for filtering (cleaner, sometimes faster)
+df.query("age > 25 and status == 'active'")
+
+# Use categories for low-cardinality strings
+df["status"] = df["status"].astype("category")
+
+# Read only needed columns
+df = pd.read_csv("big_file.csv", usecols=["name", "age"])
+
+# Use chunking for huge files
+for chunk in pd.read_csv("huge.csv", chunksize=10000):
+    process(chunk)
+```
+
+---
+
+## Sample Data Available
+
+Practice with the sample files in `sample_data/`:
+- `users.csv` - User data with status filtering
+- `sales.csv` - Sales data for groupby and pivot tables
+- `products.csv` - Product catalog
+- `employees.json` - JSON data to load
+
+```python
+import pandas as pd
+
+# Load sample data
+users = pd.read_csv("sample_data/users.csv")
+sales = pd.read_csv("sample_data/sales.csv")
+
+# Try these exercises:
+# 1. Filter active users over age 30
+# 2. Calculate total sales by region
+# 3. Find top 3 salespersons by total revenue
+# 4. Create a pivot table: region vs product
+```
+
+---
+
 ## Now Try the Problems
 
 1. `p1_numpy_operations.py` - normalize, dot product, cosine similarity, softmax, broadcasting

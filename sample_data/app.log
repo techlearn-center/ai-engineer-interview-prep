@@ -1,0 +1,28 @@
+2024-01-15 08:00:01 INFO Application started successfully
+2024-01-15 08:00:02 INFO Loading configuration from config.json
+2024-01-15 08:00:03 INFO Connected to database: production_db
+2024-01-15 08:00:05 INFO Cache initialized: redis://redis.example.com:6379
+2024-01-15 08:01:15 INFO User alice@example.com logged in
+2024-01-15 08:02:30 INFO Processing request: GET /api/users
+2024-01-15 08:02:31 DEBUG Query executed in 45ms
+2024-01-15 08:03:00 WARNING High memory usage detected: 85%
+2024-01-15 08:05:22 INFO User bob@example.com logged in
+2024-01-15 08:06:45 ERROR Failed to connect to external API: timeout after 30s
+2024-01-15 08:06:46 INFO Retrying connection (attempt 1/3)
+2024-01-15 08:06:48 INFO Retrying connection (attempt 2/3)
+2024-01-15 08:06:50 INFO External API connection restored
+2024-01-15 08:10:00 INFO Processing batch job: data_sync
+2024-01-15 08:10:30 INFO Batch job completed: 1500 records processed
+2024-01-15 08:15:00 WARNING Disk space low: 15% remaining
+2024-01-15 08:20:15 INFO User charlie@example.com logged in
+2024-01-15 08:25:00 ERROR Database connection lost
+2024-01-15 08:25:01 INFO Attempting to reconnect to database
+2024-01-15 08:25:03 INFO Database connection restored
+2024-01-15 08:30:00 INFO Scheduled task: cleanup_temp_files started
+2024-01-15 08:30:15 INFO Cleanup completed: 250 files removed
+2024-01-15 08:35:45 ERROR Invalid request from IP 192.168.1.100
+2024-01-15 08:40:00 INFO Health check passed
+2024-01-15 08:45:22 INFO User alice@example.com logged out
+2024-01-15 08:50:00 WARNING Response time exceeds threshold: 2.5s
+2024-01-15 08:55:00 INFO Cache hit ratio: 87%
+2024-01-15 09:00:00 INFO Hourly metrics: requests=1250, errors=3, avg_response=150ms

@@ -1,0 +1,16 @@
+name,email,age,city,status,signup_date
+Alice Johnson,alice@example.com,28,New York,active,2023-01-15
+Bob Smith,bob@example.com,35,Los Angeles,active,2023-02-20
+Charlie Brown,charlie@example.com,42,Chicago,inactive,2022-11-10
+Diana Martinez,diana@example.com,31,Miami,active,2023-03-05
+Edward Wilson,edward@example.com,29,Seattle,active,2023-01-22
+Fiona Chen,fiona@example.com,26,San Francisco,inactive,2022-12-01
+George Kumar,george@example.com,38,Austin,active,2023-04-18
+Hannah Lee,hannah@example.com,33,Boston,active,2023-02-28
+Ivan Petrov,ivan@example.com,45,Denver,inactive,2022-09-15
+Julia Anderson,julia@example.com,27,Portland,active,2023-05-01
+Kevin O'Brien,kevin@example.com,36,Phoenix,active,2023-03-12
+Lisa Wang,lisa@example.com,30,San Diego,inactive,2022-10-20
+Michael Jones,michael@example.com,41,Dallas,active,2023-01-08
+Nancy Garcia,nancy@example.com,34,Atlanta,active,2023-04-25
+Oscar Thompson,oscar@example.com,39,Minneapolis,inactive,2022-08-30

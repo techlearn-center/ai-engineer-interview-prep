@@ -1,0 +1,11 @@
+product_id,name,category,price,stock,supplier,rating
+P001,Widget A,Electronics,29.99,150,TechCorp,4.5
+P002,Widget B,Electronics,49.99,80,TechCorp,4.2
+P003,Gadget X,Home,19.99,200,HomeGoods,4.8
+P004,Gadget Y,Home,24.99,120,HomeGoods,4.1
+P005,Tool Alpha,Tools,34.99,60,BuildRight,4.6
+P006,Tool Beta,Tools,44.99,45,BuildRight,4.3
+P007,Device Pro,Electronics,99.99,30,TechCorp,4.9
+P008,Device Lite,Electronics,59.99,75,TechCorp,4.4
+P009,Home Helper,Home,14.99,300,HomeGoods,4.0
+P010,Power Tool X,Tools,79.99,25,BuildRight,4.7

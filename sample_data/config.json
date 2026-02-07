@@ -1,0 +1,16 @@
+{
+  "app_name": "AI Interview Prep",
+  "version": "1.0.0",
+  "debug": false,
+  "max_users": 1000,
+  "features": {
+    "analytics": true,
+    "notifications": true,
+    "dark_mode": false
+  },
+  "api": {
+    "base_url": "https://api.example.com",
+    "timeout": 30,
+    "retry_count": 3
+  }
+}
