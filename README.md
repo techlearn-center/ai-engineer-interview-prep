@@ -40,6 +40,7 @@ pytest -v
 | Data Structures | `p1_data_structures.py` | dict/hashmap, two-sum, anagrams, LRU cache |
 | Comprehensions & Generators | `p2_comprehensions_generators.py` | list comp, generators, sliding window |
 | Decorators & Closures | `p3_decorators_closures.py` | timer, retry, memoize, type validation |
+| File Operations | `p4_file_operations.py` | read/write text, JSON, CSV, paths, logging, config files |
 
 ### 02 - NumPy & Pandas
 | Problem | File | Topics |
