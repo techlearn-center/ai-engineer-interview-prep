@@ -642,7 +642,363 @@ result = agent.invoke({"messages": [("user", "What is 25 * 4?")]})
 
 ---
 
-## 20. When to Use LangGraph
+## 20. State Reducers (How State Merges)
+
+By default, returning a value from a node **overwrites** the existing state.
+Use **reducers** to control how updates merge:
+
+```python
+from typing import Annotated
+from operator import add
+from typing_extensions import TypedDict
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add]  # APPENDS instead of overwriting
+    count: int                       # This one overwrites (default)
+```
+
+**Without** `Annotated[list, add]`:
+```python
+# Node returns {"messages": ["new message"]}
+# State becomes: {"messages": ["new message"]}  ← old messages LOST
+```
+
+**With** `Annotated[list, add]`:
+```python
+# Node returns {"messages": ["new message"]}
+# State becomes: {"messages": ["old msg 1", "old msg 2", "new message"]}  ← APPENDED
+```
+
+This is critical for chat applications where you want to accumulate messages.
+
+---
+
+## 21. Checkpointing (Persistence)
+
+Save and resume graph state across sessions — critical for production chatbots:
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+# In-memory (development)
+memory = MemorySaver()
+app = workflow.compile(checkpointer=memory)
+
+# SQLite (production)
+checkpointer = SqliteSaver.from_conn_string("checkpoints.db")
+app = workflow.compile(checkpointer=checkpointer)
+
+# Every invoke needs a thread_id to identify the conversation
+config = {"configurable": {"thread_id": "user-123"}}
+result = app.invoke({"messages": ["Hello"]}, config=config)
+
+# Later — resume the SAME conversation (state is loaded automatically)
+result2 = app.invoke({"messages": ["Follow up question"]}, config=config)
+# The agent remembers the full conversation from thread "user-123"
+```
+
+**Available checkpointers:**
+- **MemorySaver:** In-memory, lost on restart (dev only)
+- **SqliteSaver:** File-based, persists across restarts
+- **PostgresSaver:** Production-grade, scalable
+- **RedisSaver:** Fast, distributed caching
+
+---
+
+## 22. Human-in-the-Loop
+
+Pause execution for human approval before critical actions:
+
+```python
+app = workflow.compile(
+    checkpointer=memory,
+    interrupt_before=["dangerous_action_node"],  # Pauses BEFORE this node runs
+)
+
+config = {"configurable": {"thread_id": "user-123"}}
+
+# Run — it pauses at the dangerous_action_node
+result = app.invoke(inputs, config)
+# At this point, execution is frozen. Human reviews the state.
+
+# Human approves → resume by passing None
+result = app.invoke(None, config)  # Continues from where it paused
+```
+
+You can also use `interrupt_after` to pause after a node completes (useful for reviewing results before continuing).
+
+---
+
+## 23. Streaming
+
+Stream tokens and node events in real-time:
+
+```python
+config = {"configurable": {"thread_id": "user-123"}}
+
+# Stream node-level events (see each node's output as it completes)
+for event in app.stream({"messages": ["Explain AI"]}, config):
+    print(event)
+    # {'analyze': {'messages': [...]}}
+    # {'respond': {'messages': [...]}}
+
+# Stream individual LLM tokens
+for event in app.stream(inputs, config, stream_mode="messages"):
+    print(event)  # Individual tokens as they arrive from the LLM
+```
+
+---
+
+## 24. ToolNode (Prebuilt Tool Handling)
+
+Instead of manually calling tools in your nodes, use the prebuilt `ToolNode`:
+
+```python
+from langgraph.prebuilt import ToolNode, tools_condition
+
+tools = [search, calculate]
+tool_node = ToolNode(tools)
+
+workflow = StateGraph(AgentState)
+workflow.add_node("agent", agent_node)     # LLM decides what to do
+workflow.add_node("tools", tool_node)      # Executes tool calls
+
+# Automatic routing: if LLM wants a tool → tools node, otherwise → END
+workflow.add_conditional_edges("agent", tools_condition)
+workflow.add_edge("tools", "agent")  # After tool runs, go back to agent
+```
+
+`tools_condition` automatically checks if the LLM response contains tool calls and routes accordingly.
+
+---
+
+## 25. Subgraphs (Composing Graphs)
+
+Nest graphs inside other graphs for complex, modular workflows:
+
+```python
+# Build a research subgraph
+research_graph = StateGraph(ResearchState)
+research_graph.add_node("search", search_node)
+research_graph.add_node("summarize", summarize_node)
+research_graph.add_edge("search", "summarize")
+research_app = research_graph.compile()
+
+# Use it as a node in the parent graph
+parent_graph = StateGraph(ParentState)
+parent_graph.add_node("research", research_app)  # Subgraph as a node
+parent_graph.add_node("write", write_node)
+parent_graph.add_edge("research", "write")
+```
+
+---
+
+## 26. The ReAct Pattern (Reason + Act Loop)
+
+The most common agent pattern — the LLM **reasons**, **acts**, then **observes**:
+
+```
+User Question
+    → LLM thinks: "I need to search for this"       (Reason)
+    → Calls search tool                               (Act)
+    → Gets search results                             (Observe)
+    → LLM thinks: "Now I have enough info to answer" (Reason)
+    → Returns final answer                            (Act)
+```
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+# This handles the full Reason → Act → Observe loop automatically
+agent = create_react_agent(llm, tools)
+result = agent.invoke({"messages": [("user", "What is the weather in NYC?")]})
+```
+
+The loop continues until the LLM decides it has enough information to answer.
+
+---
+
+## 27. Error Handling in LangGraph
+
+```python
+from langgraph.errors import NodeInterrupt
+
+def risky_node(state):
+    try:
+        result = external_api_call()
+        return {"result": result}
+    except Exception as e:
+        # Option 1: Pause for human intervention
+        raise NodeInterrupt(f"API failed: {e}")
+
+        # Option 2: Route to a fallback node via state
+        return {"error": str(e), "next_step": "fallback"}
+```
+
+---
+
+## 28. Managing State and Memory Across User Chats
+
+This is a common interview question: "How do you manage state and memory in a
+multi-user, multi-session chatbot?"
+
+### Short-term Memory (Within a Conversation)
+
+Use **checkpointing with thread_id** to maintain state within a single conversation:
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+memory = MemorySaver()
+app = workflow.compile(checkpointer=memory)
+
+# Each conversation gets a unique thread_id
+config_user1 = {"configurable": {"thread_id": "user1-session-abc"}}
+config_user2 = {"configurable": {"thread_id": "user2-session-xyz"}}
+
+# User 1's conversation — isolated from User 2
+app.invoke({"messages": [("user", "My name is Alice")]}, config_user1)
+app.invoke({"messages": [("user", "What's my name?")]}, config_user1)
+# → "Your name is Alice"
+
+# User 2's conversation — completely separate state
+app.invoke({"messages": [("user", "My name is Bob")]}, config_user2)
+```
+
+### Long-term Memory (Across Conversations)
+
+For remembering information across different sessions (e.g., user preferences),
+use an external store:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+# Create a long-term memory store
+store = InMemoryStore()
+app = workflow.compile(checkpointer=memory, store=store)
+
+# In your node, access the store to save/retrieve long-term info
+def chat_node(state, config, *, store):
+    user_id = config["configurable"]["user_id"]
+
+    # Retrieve long-term memories for this user
+    memories = store.search(("memories", user_id))
+
+    # Save new long-term memory
+    store.put(("memories", user_id), "preference_1", {
+        "value": "User prefers concise answers"
+    })
+
+    return {"messages": [...]}
+```
+
+### Production Pattern: Redis + PostgreSQL
+
+```python
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.store.postgres import PostgresStore
+
+# Short-term: checkpointer for conversation state
+checkpointer = PostgresSaver.from_conn_string(
+    "postgresql://user:pass@localhost/chatbot"
+)
+
+# Long-term: store for cross-session memories
+store = PostgresStore.from_conn_string(
+    "postgresql://user:pass@localhost/chatbot"
+)
+
+app = workflow.compile(checkpointer=checkpointer, store=store)
+```
+
+### Memory Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   MULTI-USER CHATBOT                     │
+│                                                          │
+│  User 1 ──→ thread_id: "u1-session-1"                   │
+│              thread_id: "u1-session-2"                   │
+│                                                          │
+│  User 2 ──→ thread_id: "u2-session-1"                   │
+│                                                          │
+│  ┌──────────────────────┐  ┌──────────────────────────┐  │
+│  │  CHECKPOINTER        │  │  STORE                   │  │
+│  │  (Short-term Memory) │  │  (Long-term Memory)      │  │
+│  │                      │  │                          │  │
+│  │  Per-thread state:   │  │  Per-user data:          │  │
+│  │  - Chat messages     │  │  - Preferences           │  │
+│  │  - Current step      │  │  - Past summaries        │  │
+│  │  - Tool results      │  │  - User profile          │  │
+│  │                      │  │  - Learned facts         │  │
+│  │  Backends:           │  │                          │  │
+│  │  - MemorySaver       │  │  Backends:               │  │
+│  │  - SqliteSaver       │  │  - InMemoryStore         │  │
+│  │  - PostgresSaver     │  │  - PostgresStore         │  │
+│  └──────────────────────┘  └──────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+### LangChain Memory (Without LangGraph)
+
+For simpler apps using just LangChain chains:
+
+```python
+from langchain_community.chat_message_histories import (
+    ChatMessageHistory,          # In-memory
+    RedisChatMessageHistory,     # Redis-backed
+    SQLChatMessageHistory,       # SQL-backed
+)
+from langchain_core.runnables.history import RunnableWithMessageHistory
+
+# Redis-backed history (production)
+def get_session_history(session_id: str):
+    return RedisChatMessageHistory(
+        session_id=session_id,
+        url="redis://localhost:6379",
+    )
+
+# SQL-backed history (alternative)
+def get_session_history(session_id: str):
+    return SQLChatMessageHistory(
+        session_id=session_id,
+        connection_string="sqlite:///chat_history.db",
+    )
+
+chain_with_history = RunnableWithMessageHistory(
+    chain,
+    get_session_history,
+    input_messages_key="question",
+    history_messages_key="history",
+)
+
+# Different users get different sessions
+config_alice = {"configurable": {"session_id": "alice-123"}}
+config_bob = {"configurable": {"session_id": "bob-456"}}
+
+chain_with_history.invoke({"question": "Hi, I'm Alice"}, config=config_alice)
+chain_with_history.invoke({"question": "Hi, I'm Bob"}, config=config_bob)
+```
+
+### Interview Answer: "How do you manage state and memory?"
+
+> **Short-term memory** (within a conversation): Use LangGraph's checkpointer
+> with a unique `thread_id` per conversation. State (messages, tool results,
+> current step) is automatically saved and restored. For LangChain chains,
+> use `RunnableWithMessageHistory` with a `session_id`.
+>
+> **Long-term memory** (across conversations): Use LangGraph's store or an
+> external database (Redis, PostgreSQL) to persist user preferences, learned
+> facts, and conversation summaries across sessions.
+>
+> **Multi-user isolation**: Each user/session gets a unique identifier
+> (`thread_id` or `session_id`), ensuring conversations are completely isolated.
+> In production, use PostgreSQL or Redis backends for durability and scalability.
+
+---
+
+## 29. When to Use LangGraph
 
 | Use Case | Tool |
 |----------|------|
@@ -653,6 +1009,20 @@ result = agent.invoke({"messages": [("user", "What is 25 * 4?")]})
 | Multi-step reasoning (ReAct, CoT) | LangGraph |
 | Human-in-the-loop approval | LangGraph |
 | Parallel processing | LangGraph |
+| Persistent multi-session chatbot | LangGraph + Checkpointer |
+
+### LangGraph vs LangChain Chains
+
+| Feature | LangChain Chains | LangGraph |
+|---------|-----------------|-----------|
+| Flow | Linear only | Loops, branches, cycles |
+| State | Stateless | Stateful (TypedDict) |
+| Persistence | Manual | Built-in checkpointing |
+| Human approval | Not supported | `interrupt_before` / `interrupt_after` |
+| Tool use | Basic | Full ReAct loop with `ToolNode` |
+| Streaming | Token-level | Token + node-level events |
+| Composability | Pipe operator | Subgraphs |
+| Memory | `RunnableWithMessageHistory` | Checkpointer + Store |
 
 ---
 
