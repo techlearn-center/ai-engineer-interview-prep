@@ -2380,38 +2380,37 @@ jobs:
           path: eval_results/
 ```
 
-```yaml
-# .github/workflows/cd.yml
-name: CD Pipeline
+---
 
-on:
-  push:
-    tags: ["v*"]
+## 47. CI/CD Tools Overview
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Docker image
-        run: docker build -t my-llm-app:${{ github.ref_name }} -f docker/Dockerfile .
-
-      - name: Push to registry
-        run: |
-          docker tag my-llm-app:${{ github.ref_name }} gcr.io/my-project/my-llm-app:${{ github.ref_name }}
-          docker push gcr.io/my-project/my-llm-app:${{ github.ref_name }}
-
-      - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          service: my-llm-app
-          image: gcr.io/my-project/my-llm-app:${{ github.ref_name }}
-```
+| Tool | Purpose | Cloud |
+|------|---------|-------|
+| **GitHub Actions** | CI/CD pipeline orchestration | All |
+| **Docker** | Containerize the app | All |
+| **Terraform** | Infrastructure as Code (IaC) | All |
+| **AWS ECR** | Container registry | AWS |
+| **AWS ECS / Fargate** | Container orchestration (serverless) | AWS |
+| **AWS Lambda** | Serverless functions (lightweight chains) | AWS |
+| **AWS Bedrock** | Managed LLM hosting | AWS |
+| **AWS Secrets Manager** | Store API keys and secrets | AWS |
+| **AWS CloudWatch** | Logging and monitoring | AWS |
+| **GCP Artifact Registry** | Container registry | GCP |
+| **GCP Cloud Run** | Serverless containers | GCP |
+| **GCP Vertex AI** | Managed LLM hosting | GCP |
+| **GCP Secret Manager** | Store API keys and secrets | GCP |
+| **GCP Cloud Logging** | Logging and monitoring | GCP |
+| **Azure ACR** | Container registry | Azure |
+| **Azure Container Apps** | Serverless containers | Azure |
+| **Azure OpenAI Service** | Managed LLM hosting | Azure |
+| **Azure Key Vault** | Store API keys and secrets | Azure |
+| **Azure Monitor** | Logging and monitoring | Azure |
+| **Helm** | Kubernetes package manager | All (K8s) |
+| **ArgoCD** | GitOps continuous delivery for K8s | All (K8s) |
 
 ---
 
-## 47. Docker Deployment
+## 48. Docker Setup (Shared Across All Clouds)
 
 ```dockerfile
 # docker/Dockerfile
@@ -2439,7 +2438,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 ```
 
 ```yaml
-# docker/docker-compose.yml
+# docker/docker-compose.yml (local development)
 version: "3.8"
 
 services:
@@ -2478,7 +2477,234 @@ volumes:
 
 ---
 
-## 48. Monitoring & Observability in Production
+## 49. Deploying to AWS (ECS Fargate)
+
+### Architecture
+```
+┌─────────────────────────────────────────────────┐
+│                      AWS                         │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ API      │    │ ECS      │    │ RDS       │  │
+│  │ Gateway  │───→│ Fargate  │───→│ PostgreSQL│  │
+│  └──────────┘    │ (App)    │    └───────────┘  │
+│                  └────┬─────┘                    │
+│                       │                          │
+│              ┌────────┴────────┐                 │
+│              │                 │                 │
+│        ┌─────┴─────┐   ┌──────┴──────┐          │
+│        │ ECR       │   │ Secrets     │          │
+│        │ (Images)  │   │ Manager     │          │
+│        └───────────┘   └─────────────┘          │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ S3       │    │CloudWatch│    │ ElastiCache│  │
+│  │ (Docs)   │    │ (Logs)   │    │ (Redis)   │  │
+│  └──────────┘    └──────────┘    └───────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+### How the AWS Pipeline Works
+
+**Step-by-step deployment flow:**
+
+1. **Developer pushes a git tag** (e.g., `git tag v1.0.0 && git push --tags`)
+2. **GitHub Actions triggers** the CD pipeline
+3. **Authenticate** with AWS using OIDC (no stored credentials — more secure than access keys)
+4. **Login to ECR** (Elastic Container Registry) — AWS's private Docker image store
+5. **Build the Docker image** and push it to ECR with the version tag
+6. **Update the ECS Task Definition** — this is a JSON file that tells ECS which image to run, what CPU/memory to allocate, and what environment variables to set
+7. **Deploy to ECS Fargate** — Fargate is serverless containers, meaning you don't manage any servers. AWS provisions the infrastructure automatically
+8. **Wait for stability** — the pipeline waits until the new version is healthy before marking success
+
+**Infrastructure provisioned with Terraform:**
+- **ECR** — stores your Docker images (like a private Docker Hub)
+- **ECS Fargate** — runs your containers without managing servers. You define how many replicas you want (e.g., `desired_count = 2` for high availability)
+- **RDS PostgreSQL** — managed database for LangGraph checkpointing. AWS handles backups, patching, and failover
+- **ElastiCache Redis** — managed Redis for session caching and rate limiting
+- **Secrets Manager** — securely stores your OpenAI API key, database passwords, etc. Your app fetches secrets at runtime using the AWS SDK (`boto3`)
+- **S3** — stores raw documents for the ingestion pipeline
+
+**Why Fargate over EC2?** You don't manage servers. It auto-scales based on demand. You only pay for the CPU/memory your containers actually use. Perfect for LLM apps with variable traffic.
+
+---
+
+## 50. Deploying to GCP (Cloud Run)
+
+### Architecture
+```
+┌─────────────────────────────────────────────────┐
+│                      GCP                         │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ Cloud    │    │ Cloud    │    │ Cloud SQL │  │
+│  │ Load     │───→│ Run      │───→│ PostgreSQL│  │
+│  │ Balancer │    │ (App)    │    └───────────┘  │
+│  └──────────┘    └────┬─────┘                    │
+│                       │                          │
+│              ┌────────┴────────┐                 │
+│              │                 │                 │
+│        ┌─────┴─────┐   ┌──────┴──────┐          │
+│        │ Artifact  │   │ Secret      │          │
+│        │ Registry  │   │ Manager     │          │
+│        └───────────┘   └─────────────┘          │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ GCS      │    │ Cloud    │    │ Memorystore│  │
+│  │ (Docs)   │    │ Logging  │    │ (Redis)   │  │
+│  └──────────┘    └──────────┘    └───────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+### How the GCP Pipeline Works
+
+**Step-by-step deployment flow:**
+
+1. **Developer pushes a git tag** → GitHub Actions triggers
+2. **Authenticate** with GCP using Workload Identity Federation (WIF) — the modern, keyless way to authenticate from CI/CD
+3. **Push Docker image** to Artifact Registry (GCP's container registry)
+4. **Deploy to Cloud Run** with a single command — Cloud Run automatically provisions infrastructure, sets up HTTPS, and configures auto-scaling
+
+**Why Cloud Run is popular for LLM apps:** It can **scale to zero** when there's no traffic (you pay nothing), and it scales up automatically when requests come in. You just give it a Docker image and it handles everything. It also natively integrates with Cloud SQL (for PostgreSQL) and Secret Manager.
+
+**Infrastructure provisioned with Terraform:**
+- **Artifact Registry** — stores Docker images (replaced the older Container Registry)
+- **Cloud Run** — serverless container platform. Set `min_instances=1` to avoid cold starts, or `0` for cost savings. `max_instances=10` caps scaling
+- **Cloud SQL PostgreSQL** — managed database for LangGraph checkpointing. Connects to Cloud Run via a private SQL proxy (no public IP needed)
+- **Memorystore Redis** — managed Redis for caching and rate limiting
+- **Secret Manager** — stores API keys. Cloud Run can reference secrets directly as environment variables using `--set-secrets` flag
+- **GCS Bucket** — stores raw documents for ingestion
+
+**Cloud Run flags explained:**
+- `--memory=2Gi` — LLM apps need more memory for embedding models and document processing
+- `--min-instances=1` — keeps one instance warm to avoid cold start latency
+- `--set-secrets` — injects secrets from Secret Manager as env vars at runtime
+- `--add-cloudsql-instances` — creates a secure connection to your PostgreSQL database
+
+---
+
+## 51. Deploying to Azure (Container Apps)
+
+### Architecture
+```
+┌─────────────────────────────────────────────────┐
+│                     Azure                        │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ Front    │    │ Container│    │ Azure DB  │  │
+│  │ Door     │───→│ Apps     │───→│ PostgreSQL│  │
+│  │ (CDN/LB) │    │ (App)    │    └───────────┘  │
+│  └──────────┘    └────┬─────┘                    │
+│                       │                          │
+│              ┌────────┴────────┐                 │
+│              │                 │                 │
+│        ┌─────┴─────┐   ┌──────┴──────┐          │
+│        │ ACR       │   │ Key Vault  │          │
+│        │ (Images)  │   │ (Secrets)  │          │
+│        └───────────┘   └─────────────┘          │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌───────────┐  │
+│  │ Blob     │    │ Azure    │    │ Azure     │  │
+│  │ Storage  │    │ Monitor  │    │ Cache     │  │
+│  │ (Docs)   │    │ (Logs)   │    │ (Redis)   │  │
+│  └──────────┘    └──────────┘    └───────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+### How the Azure Pipeline Works
+
+**Step-by-step deployment flow:**
+
+1. **Developer pushes a git tag** → GitHub Actions triggers
+2. **Authenticate** with Azure using OIDC (Federated Identity — no client secrets stored in GitHub)
+3. **Push Docker image** to ACR (Azure Container Registry)
+4. **Deploy to Container Apps** — Azure's serverless container platform (similar to Cloud Run). Uses `az containerapp update` to swap the image
+
+**Infrastructure provisioned with Terraform:**
+- **ACR** — Azure Container Registry, stores Docker images
+- **Container Apps** — serverless containers with built-in auto-scaling (1 to 10 replicas). Has a concept of "environments" that group related apps
+- **Azure DB for PostgreSQL (Flexible Server)** — managed PostgreSQL for LangGraph checkpointing. Flexible Server is the modern version with better pricing
+- **Azure Cache for Redis** — managed Redis for session caching
+- **Key Vault** — Azure's secret manager. Apps authenticate using Managed Identity (no credentials in code)
+- **Blob Storage** — stores raw documents for ingestion
+
+### Why Azure for LLM Apps?
+
+Azure has a unique advantage: **Azure OpenAI Service**. Instead of calling OpenAI's
+API directly, you deploy GPT-4, GPT-3.5, and embedding models into your own
+Azure tenant. This gives you:
+
+- **Data privacy** — your data never leaves your Azure subscription
+- **Enterprise compliance** — meets regulatory requirements (HIPAA, SOC 2, etc.)
+- **SLA guarantees** — Microsoft-backed uptime guarantees
+- **Private networking** — models accessible only within your VNet
+
+In LangChain, you just swap `ChatOpenAI` for `AzureChatOpenAI`:
+
+```python
+from langchain_openai import AzureChatOpenAI
+
+llm = AzureChatOpenAI(
+    azure_deployment="gpt-4",
+    azure_endpoint="https://my-resource.openai.azure.com",
+    api_version="2024-02-01",
+)
+```
+
+Same chain code, different model provider. LangChain abstracts the difference.
+
+---
+
+## 52. Cloud Deployment Comparison
+
+| Feature | AWS | GCP | Azure |
+|---------|-----|-----|-------|
+| **Container Service** | ECS Fargate | Cloud Run | Container Apps |
+| **Container Registry** | ECR | Artifact Registry | ACR |
+| **Database** | RDS PostgreSQL | Cloud SQL | Azure DB for PostgreSQL |
+| **Cache** | ElastiCache Redis | Memorystore | Azure Cache for Redis |
+| **Secrets** | Secrets Manager | Secret Manager | Key Vault |
+| **Object Storage** | S3 | GCS | Blob Storage |
+| **Monitoring** | CloudWatch | Cloud Logging | Azure Monitor |
+| **LLM Hosting** | Bedrock | Vertex AI | Azure OpenAI Service |
+| **CDN / Load Balancer** | ALB + CloudFront | Cloud Load Balancing | Front Door |
+| **IaC** | Terraform / CDK | Terraform / Pulumi | Terraform / Bicep |
+| **Serverless Option** | Lambda | Cloud Functions | Azure Functions |
+| **Kubernetes** | EKS | GKE | AKS |
+
+### Quick Decision Guide
+
+| If you need... | Choose |
+|---------------|--------|
+| Simplest container deployment | **GCP Cloud Run** (zero config scaling) |
+| Best enterprise LLM integration | **Azure** (Azure OpenAI Service) |
+| Most mature ecosystem | **AWS** (ECS + Bedrock) |
+| Kubernetes-native | Any — all have managed K8s (EKS/GKE/AKS) |
+| Lowest cost for small apps | **GCP Cloud Run** (scale to zero) |
+| Compliance / regulated industry | **Azure** (strong enterprise governance) |
+
+### Interview Answer: "How would you deploy an LLM app to production?"
+
+> **Containerize** the app with Docker (FastAPI + uvicorn). Push to a container
+> registry (ECR / Artifact Registry / ACR). Deploy to a serverless container
+> service (ECS Fargate / Cloud Run / Container Apps) for auto-scaling.
+>
+> **Database layer:** PostgreSQL for LangGraph checkpointing (RDS / Cloud SQL /
+> Azure DB), Redis for session caching (ElastiCache / Memorystore / Azure Cache).
+>
+> **Secrets:** Store API keys in the cloud secret manager (Secrets Manager /
+> Secret Manager / Key Vault) — never in environment variables or code.
+>
+> **CI/CD:** GitHub Actions pipeline — lint and unit tests on every commit,
+> integration tests on PRs, build and push Docker image on tag, deploy to
+> the cloud service. Use Terraform for infrastructure as code.
+>
+> **Monitoring:** Cloud-native logging (CloudWatch / Cloud Logging / Azure Monitor)
+> plus LangSmith for LLM-specific tracing, cost tracking, and evaluation.
+
+---
+
+## 53. Monitoring & Observability in Production (All Clouds)
 
 ```python
 # app/monitoring.py
@@ -2554,7 +2780,7 @@ def collect_feedback(run_id: str, score: float, comment: str = ""):
 
 ---
 
-## 49. Production Checklist
+## 54. Production Checklist
 
 ### Before Launch
 - [ ] All unit and integration tests pass
@@ -2592,7 +2818,7 @@ def collect_feedback(run_id: str, score: float, comment: str = ""):
 
 ---
 
-## 50. E2E Pipeline Flow Summary
+## 55. E2E Pipeline Flow Summary
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -2633,7 +2859,7 @@ def collect_feedback(run_id: str, score: float, comment: str = ""):
 
 ---
 
-## 51. Interview Answer: "Walk me through building an E2E LLM app"
+## 56. Interview Answer: "Walk me through building an E2E LLM app"
 
 > **Data layer:** Ingest documents using loaders, split with
 > RecursiveCharacterTextSplitter, embed with OpenAI embeddings, store in a
