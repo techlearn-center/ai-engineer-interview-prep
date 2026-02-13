@@ -816,6 +816,327 @@ answer_question("What is the return policy?")
 
 ---
 
+# Part 4: Testing & Evaluating LangChain Applications
+
+Building LLM apps is one thing — knowing they work correctly is another.
+
+## 28. GenAI Testing Tools Overview
+
+| Category | Tools | Purpose |
+|----------|-------|---------|
+| **Evaluation Frameworks** | Ragas, DeepEval, Promptfoo | Measure output quality (faithfulness, relevance, hallucination) |
+| **Observability & Tracing** | LangSmith, LangFuse, Arize Phoenix | Trace every step, debug failures, monitor production |
+| **Load & Performance** | Locust, LiteLLM | Benchmark latency, throughput, and cost across providers |
+| **Guardrails & Safety** | Guardrails AI, NeMo Guardrails, Rebuff | Validate output structure, enforce safety rails, detect prompt injection |
+| **General / E2E** | pytest + DeepEval, Giskard, TruLens | Unit/integration tests, bias scanning, groundedness checks |
+
+---
+
+## 29. Testing RAG with Ragas
+
+Ragas is the go-to framework for evaluating RAG pipelines:
+
+```bash
+pip install ragas
+```
+
+```python
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_precision, context_recall
+from datasets import Dataset
+
+# Prepare evaluation data
+eval_data = Dataset.from_dict({
+    "question": ["What is the refund policy?"],
+    "answer": ["Refunds are available within 30 days of purchase."],
+    "contexts": [["Our refund policy allows returns within 30 days. Items must be unused."]],
+    "ground_truth": ["Refunds are available within 30 days."],
+})
+
+# Run evaluation
+results = evaluate(
+    eval_data,
+    metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+)
+print(results)
+# {'faithfulness': 0.95, 'answer_relevancy': 0.92, 'context_precision': 0.88, ...}
+```
+
+**Key Ragas metrics:**
+- **Faithfulness:** Is the answer grounded in the retrieved context? (no hallucination)
+- **Answer Relevancy:** Does the answer actually address the question?
+- **Context Precision:** Are the retrieved documents relevant to the question?
+- **Context Recall:** Did the retriever find all the necessary information?
+
+---
+
+## 30. Unit Testing LLM Outputs with DeepEval
+
+```bash
+pip install deepeval
+```
+
+```python
+from deepeval import assert_test
+from deepeval.test_case import LLMTestCase
+from deepeval.metrics import HallucinationMetric, AnswerRelevancyMetric
+
+def test_no_hallucination():
+    test_case = LLMTestCase(
+        input="What is our return policy?",
+        actual_output="You can return items within 30 days for a full refund.",
+        context=["Our return policy allows returns within 30 days. Full refund provided."],
+    )
+    metric = HallucinationMetric(threshold=0.5)
+    assert_test(test_case, [metric])
+
+def test_answer_relevancy():
+    test_case = LLMTestCase(
+        input="What is Python?",
+        actual_output="Python is a programming language known for its readability.",
+    )
+    metric = AnswerRelevancyMetric(threshold=0.7)
+    assert_test(test_case, [metric])
+```
+
+```bash
+# Run with pytest
+deepeval test run test_llm.py
+```
+
+---
+
+## 31. Prompt Regression Testing with Promptfoo
+
+Test prompts across models and catch regressions:
+
+```bash
+npx promptfoo@latest init
+```
+
+```yaml
+# promptfooconfig.yaml
+prompts:
+  - "Answer this question: {{question}}"
+  - "You are a helpful assistant. Answer: {{question}}"
+
+providers:
+  - openai:gpt-4
+  - openai:gpt-3.5-turbo
+
+tests:
+  - vars:
+      question: "What is Python?"
+    assert:
+      - type: contains
+        value: "programming language"
+      - type: llm-rubric
+        value: "Answer should be concise and accurate"
+  - vars:
+      question: "What is 2+2?"
+    assert:
+      - type: contains
+        value: "4"
+```
+
+```bash
+npx promptfoo@latest eval
+npx promptfoo@latest view  # Opens a comparison UI in the browser
+```
+
+---
+
+## 32. Guardrails for LangChain
+
+### Using Guardrails AI
+
+Validate LLM outputs match expected structure and rules:
+
+```bash
+pip install guardrails-ai
+```
+
+```python
+from guardrails import Guard
+from guardrails.hub import ValidLength, ToxicLanguage
+
+guard = Guard().use_many(
+    ValidLength(min=10, max=500, on_fail="reask"),
+    ToxicLanguage(on_fail="fix"),
+)
+
+# Wrap your LangChain call
+raw_output = chain.invoke({"question": "Tell me about Python"})
+validated = guard.validate(raw_output)
+print(validated.validated_output)
+```
+
+### Using NeMo Guardrails (NVIDIA)
+
+Add programmable safety rails to your LangChain app:
+
+```python
+from nemoguardrails import RailsConfig, LLMRails
+
+config = RailsConfig.from_path("./config")
+rails = LLMRails(config)
+
+response = rails.generate(
+    messages=[{"role": "user", "content": "How do I hack a website?"}]
+)
+# Response is blocked or redirected by the rails
+```
+
+---
+
+## 33. Testing Quick Reference
+
+| What You Want to Test | Tool | How |
+|----------------------|------|-----|
+| RAG quality (faithfulness, relevancy) | Ragas | `evaluate()` with metrics |
+| Hallucination detection | DeepEval | `HallucinationMetric` |
+| Prompt regression across models | Promptfoo | YAML config + `eval` |
+| Output structure validation | Guardrails AI | `Guard.validate()` |
+| End-to-end tracing | LangSmith / LangFuse | Auto-tracing with env vars |
+| Safety & toxicity | NeMo Guardrails | Colang rules |
+| Load testing LLM APIs | Locust | Standard HTTP load test |
+| Cost/latency comparison | LiteLLM | Proxy across providers |
+
+---
+
+# Part 5: OWASP Top 10 for LLM Applications
+
+The **OWASP Top 10 for Large Language Model Applications** is a security framework
+that identifies the most critical vulnerabilities in LLM-powered apps. This is
+frequently asked about in AI engineer interviews.
+
+## 34. The OWASP Top 10 for LLMs
+
+| # | Vulnerability | Description |
+|---|--------------|-------------|
+| 1 | **Prompt Injection** | Manipulating the model via crafted inputs to bypass instructions. Can be **direct** (user types malicious prompt) or **indirect** (injected via external data sources like web pages or documents). |
+| 2 | **Sensitive Information Disclosure** | Model leaking PII, API keys, system prompts, or training data in its responses. |
+| 3 | **Supply Chain Vulnerabilities** | Compromised pre-trained models, poisoned training datasets, or vulnerable third-party plugins/packages. |
+| 4 | **Data and Model Poisoning** | Corrupting training or fine-tuning data to introduce backdoors, biases, or incorrect behavior. |
+| 5 | **Improper Output Handling** | Trusting LLM output without validation or sanitization, leading to XSS, SQL injection, or code execution. |
+| 6 | **Excessive Agency** | Granting the LLM too many permissions, tools, or autonomy without proper guardrails or human oversight. |
+| 7 | **System Prompt Leakage** | Attackers extracting system instructions through prompt manipulation techniques. |
+| 8 | **Vector and Embedding Weaknesses** | Manipulating RAG retrieval by poisoning vector store embeddings or exploiting weak access controls. |
+| 9 | **Misinformation** | Model generating hallucinated, false, or misleading content presented as fact. |
+| 10 | **Unbounded Consumption** | No limits on token usage, API calls, or resource consumption — leading to denial-of-wallet or denial-of-service. |
+
+---
+
+## 35. OWASP Mitigations in LangChain Apps
+
+Here's how each vulnerability maps to LangChain-specific defenses:
+
+### Prompt Injection (#1)
+```python
+# Use strict prompt templates — never concatenate raw user input into system prompts
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. Only answer questions about our products."),
+    ("user", "{user_input}"),  # Kept separate from system instructions
+])
+
+# Add input validation
+def sanitize_input(text: str) -> str:
+    forbidden = ["ignore previous", "system prompt", "forget instructions"]
+    for phrase in forbidden:
+        if phrase.lower() in text.lower():
+            return "I can only help with product questions."
+    return text
+```
+
+### Sensitive Information Disclosure (#2)
+```python
+# Filter outputs before returning to user
+from langchain_core.output_parsers import StrOutputParser
+
+def filter_sensitive(output: str) -> str:
+    import re
+    # Remove potential API keys, emails, SSNs
+    output = re.sub(r'sk-[a-zA-Z0-9]{20,}', '[REDACTED]', output)
+    output = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[REDACTED]', output)
+    return output
+
+chain = prompt | llm | StrOutputParser() | filter_sensitive
+```
+
+### Improper Output Handling (#5)
+```python
+# Always sanitize LLM output before using in downstream systems
+import html
+
+def safe_output(text: str) -> str:
+    return html.escape(text)  # Prevent XSS
+
+# Never pass LLM output directly to eval(), exec(), or SQL queries
+# BAD:  eval(llm_response)
+# GOOD: use structured output parsers with validation
+```
+
+### Excessive Agency (#6)
+```python
+# Limit tool access and add human approval
+from langgraph.prebuilt import create_react_agent
+
+# Only give the agent READ-ONLY tools
+agent = create_react_agent(llm, tools=[search_tool])  # No write/delete tools
+
+# Add human-in-the-loop for sensitive actions
+# Use LangGraph's interrupt_before for approval steps
+```
+
+### Unbounded Consumption (#10)
+```python
+# Set token limits and rate limiting
+llm = ChatOpenAI(
+    model="gpt-4",
+    max_tokens=500,          # Cap output length
+    request_timeout=30,      # Timeout long requests
+)
+
+# Track costs with LangSmith or callbacks
+from langchain_community.callbacks import get_openai_callback
+
+with get_openai_callback() as cb:
+    result = chain.invoke({"question": "Explain quantum physics"})
+    print(f"Cost: ${cb.total_cost:.4f}, Tokens: {cb.total_tokens}")
+```
+
+---
+
+## 36. Security Checklist for LangChain Apps
+
+- [ ] Separate system and user messages in prompt templates
+- [ ] Validate and sanitize all user inputs before passing to chains
+- [ ] Never pass LLM output directly to `eval()`, `exec()`, or raw SQL
+- [ ] Use output parsers with Pydantic validation for structured responses
+- [ ] Set `max_tokens` and request timeouts on all LLM calls
+- [ ] Limit tool permissions — principle of least privilege
+- [ ] Add human-in-the-loop for destructive or high-impact actions
+- [ ] Monitor costs and token usage with callbacks or LangSmith
+- [ ] Implement rate limiting on user-facing endpoints
+- [ ] Scan vector store data for injection attempts before indexing
+- [ ] Never expose system prompts — treat them as secrets
+- [ ] Use Guardrails or NeMo Guardrails for production safety rails
+
+---
+
+## 37. Interview Quick Reference
+
+**"What are the OWASP Top 10 for LLMs?"**
+> A security framework identifying the 10 most critical vulnerabilities in LLM applications — from prompt injection and data poisoning to excessive agency and unbounded consumption. It guides teams on building safer AI-powered systems.
+
+**"How do you test a GenAI application?"**
+> Use a combination of: (1) evaluation frameworks like Ragas for RAG quality, (2) DeepEval or Promptfoo for unit testing and prompt regression, (3) LangSmith or LangFuse for observability and tracing, and (4) Guardrails AI or NeMo Guardrails for output validation and safety.
+
+**"How do you prevent prompt injection?"**
+> Separate system and user messages in templates, validate inputs, use guardrails, and never concatenate raw user input into system prompts. For indirect injection via RAG, scan and sanitize documents before indexing.
+
+---
+
 ## Now Try the Problems
 
 The practice problems build up step by step:
