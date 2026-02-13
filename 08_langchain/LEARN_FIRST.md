@@ -2581,6 +2581,65 @@ volumes:
 - `--set-secrets` — injects secrets from Secret Manager as env vars at runtime
 - `--add-cloudsql-instances` — creates a secure connection to your PostgreSQL database
 
+### Using Vertex AI with LangChain
+
+**What is Vertex AI?** It's Google's fully managed ML/AI platform. For LLM apps,
+Vertex AI lets you use Google's own models (Gemini) or deploy third-party models
+— all within your GCP project with enterprise security and compliance.
+
+**Why use Vertex AI instead of calling OpenAI directly?**
+- **Data residency** — your prompts and data stay within GCP (important for regulated industries)
+- **No API key management** — authenticates via GCP IAM / service accounts instead of API keys
+- **Google's models** — access to Gemini Pro, Gemini Ultra, PaLM 2, and Codey without a separate OpenAI subscription
+- **Model Garden** — deploy open-source models (Llama, Mistral) on your own infrastructure
+- **Grounding** — Vertex AI can ground responses in Google Search or your own data automatically
+- **Enterprise SLA** — Google-backed uptime guarantees
+
+**In LangChain, you swap `ChatOpenAI` for `ChatVertexAI`:**
+
+```python
+from langchain_google_vertexai import ChatVertexAI, VertexAIEmbeddings
+
+# Use Gemini via Vertex AI
+llm = ChatVertexAI(
+    model_name="gemini-pro",     # or "gemini-ultra", "chat-bison"
+    project="my-gcp-project",
+    location="us-central1",
+    temperature=0,
+    max_output_tokens=1000,
+)
+
+# Embeddings via Vertex AI
+embeddings = VertexAIEmbeddings(
+    model_name="text-embedding-004",
+    project="my-gcp-project",
+)
+
+# Everything else stays the same — same chain, same RAG pipeline
+chain = prompt | llm | parser
+```
+
+**The key benefit:** Your entire RAG pipeline code stays identical. You just swap
+the model class. LangChain abstracts away the provider differences, so you can
+switch between OpenAI, Vertex AI, Azure OpenAI, or even local models without
+changing your chain logic.
+
+**Vertex AI vs OpenAI API — when to choose which:**
+
+| Factor | OpenAI API (direct) | Vertex AI |
+|--------|-------------------|-----------|
+| **Setup** | Just an API key | GCP project + IAM setup |
+| **Models** | GPT-4, GPT-3.5 | Gemini, PaLM 2, open-source models |
+| **Data privacy** | Data sent to OpenAI servers | Data stays in your GCP project |
+| **Auth** | API key | GCP service account / IAM |
+| **Cost** | Pay-per-token to OpenAI | Pay-per-token to Google (often cheaper) |
+| **Compliance** | Limited | SOC 2, HIPAA, FedRAMP, ISO 27001 |
+| **Best for** | Prototyping, startups | Enterprise, regulated industries |
+
+**Interview tip:** When asked "how would you deploy an LLM app on GCP?", mention
+both Cloud Run (for serving) AND Vertex AI (for model hosting). This shows you
+understand the full GCP AI stack, not just container deployment.
+
 ---
 
 ## 51. Deploying to Azure (Container Apps)
