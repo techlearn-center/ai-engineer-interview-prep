@@ -949,7 +949,407 @@ if __name__ == "__main__":
 
 ---
 
-## 20. What's Next?
+---
+
+# Part 2: MCP Server Architecture & Scalability (Production)
+
+This section covers how to architect MCP servers for production — the interview question about whether you deploy one big Docker container or split into multiple services.
+
+---
+
+## 20. The Core Architecture Question: Monolith vs Microservices
+
+When you build MCP servers, the first decision is **how to package them**. There are two main patterns:
+
+### Pattern 1: Monolith (Single Server, All Tools)
+
+```
+┌──────────────────────────────────────────────┐
+│           Single MCP Server Container         │
+│                                               │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │ GitHub   │ │ Database │ │ File System  │ │
+│  │ Tools    │ │ Tools    │ │ Tools        │ │
+│  └──────────┘ └──────────┘ └──────────────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │
+│  │ Slack    │ │ Search   │ │ Analytics    │ │
+│  │ Tools    │ │ Tools    │ │ Tools        │ │
+│  └──────────┘ └──────────┘ └──────────────┘ │
+│                                               │
+│  One process, one Docker image, one port      │
+└──────────────────────────────────────────────┘
+```
+
+**How it works:** You bundle ALL your tools, resources, and prompts into a single MCP server process. The AI client connects to one endpoint and gets access to everything.
+
+**Advantages:**
+- **Simple to deploy** — one Docker image, one container, one URL to configure
+- **Simple to develop** — all code in one place, easy to test locally
+- **Low latency** — no network hops between tools, shared memory
+- **Easy local development** — just run `python server.py` and everything works
+
+**Disadvantages:**
+- **Scaling is all-or-nothing** — if your database tool gets heavy traffic, you have to scale the entire server (including the barely-used Slack tools)
+- **Single point of failure** — if one tool crashes the process, ALL tools go down
+- **Deployment coupling** — updating your GitHub tool means redeploying the database tool too
+- **Resource contention** — a memory-hungry search tool starves the other tools
+
+### Pattern 2: Microservices (Separate Servers per Domain)
+
+```
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│  GitHub MCP  │  │ Database MCP │  │ Search MCP   │
+│   Server     │  │   Server     │  │   Server     │
+│              │  │              │  │              │
+│  - repos     │  │  - query     │  │  - semantic  │
+│  - issues    │  │  - schema    │  │  - keyword   │
+│  - PRs       │  │  - migrate   │  │  - index     │
+│              │  │              │  │              │
+│  Container 1 │  │  Container 2 │  │  Container 3 │
+└──────────────┘  └──────────────┘  └──────────────┘
+        ▲                ▲                ▲
+        │                │                │
+        └────────────────┼────────────────┘
+                         │
+              ┌──────────────────┐
+              │   MCP Client     │
+              │ (connects to all │
+              │  servers)        │
+              └──────────────────┘
+```
+
+**How it works:** Each domain (GitHub, database, search, etc.) gets its own MCP server running in its own Docker container. The AI client connects to multiple servers simultaneously.
+
+**Advantages:**
+- **Independent scaling** — scale your search server to 10 replicas while keeping one GitHub server
+- **Fault isolation** — if the database server crashes, GitHub and search tools still work
+- **Independent deployment** — update the GitHub server without touching anything else
+- **Team ownership** — different teams can own different servers
+- **Technology freedom** — your search server can use Rust for performance, others use Python
+
+**Disadvantages:**
+- **More complex infrastructure** — service discovery, networking, multiple Docker images
+- **Higher operational overhead** — more containers to monitor, log, and maintain
+- **Network latency** — cross-service calls add milliseconds
+- **Configuration complexity** — the AI client needs to know about all server endpoints
+
+---
+
+## 21. When to Use Which Pattern
+
+This is the key interview question — there's no universally correct answer. It depends on your context:
+
+### Start with Monolith When:
+- **Early stage** — you're prototyping or have < 5 tools
+- **Small team** — 1-3 developers working on everything
+- **Low traffic** — internal tool or small user base
+- **Fast iteration** — you need to ship and change things quickly
+- **Local/desktop use** — running alongside Claude Desktop or VS Code
+
+### Move to Microservices When:
+- **Scale pressure** — one tool gets 100x more traffic than others
+- **Team growth** — multiple teams need to own and deploy independently
+- **Reliability requirements** — you can't afford one buggy tool taking down everything
+- **Different resource profiles** — your RAG search needs GPUs while your CRUD tools need minimal compute
+- **Compliance boundaries** — some tools touch sensitive data and need isolated environments
+
+### The Hybrid Pattern (Most Common in Production)
+
+In practice, most teams use a hybrid approach — grouping related tools into a few servers rather than going fully monolith or fully micro:
+
+```
+┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
+│  Data MCP Server   │  │  DevOps MCP Server │  │  AI/ML MCP Server  │
+│                    │  │                    │  │                    │
+│  - database query  │  │  - github repos    │  │  - RAG search      │
+│  - database write  │  │  - github issues   │  │  - embeddings      │
+│  - cache lookup    │  │  - CI/CD triggers  │  │  - model inference  │
+│  - data export     │  │  - deployment      │  │  - vector store    │
+│                    │  │  - monitoring      │  │                    │
+│  Container 1       │  │  Container 2       │  │  Container 3 (GPU) │
+└────────────────────┘  └────────────────────┘  └────────────────────┘
+```
+
+**Why hybrid works best:** You group by domain and scaling characteristics. Data tools scale together, DevOps tools scale together, and compute-heavy AI tools get their own GPU-enabled containers. You get most of the microservices benefits without the overhead of managing 20 individual containers.
+
+---
+
+## 22. Docker Deployment Strategies for MCP Servers
+
+### Single Container (Monolith)
+
+You package everything into one Docker image. The MCP server listens on a single port (typically using HTTP/SSE transport for production rather than stdio).
+
+**How it works in production:**
+1. Your Dockerfile installs all dependencies for all tools
+2. The MCP server starts and registers all tools/resources/prompts
+3. You expose one port (e.g., 8080) for the MCP protocol
+4. The AI client connects to `http://mcp-server:8080`
+5. A load balancer can put multiple replicas behind one URL
+
+**When traffic grows:** You scale by running multiple identical copies of the same container behind a load balancer. Every replica has all tools.
+
+### Multiple Containers (Microservices)
+
+Each MCP server gets its own Docker image, optimized for its needs.
+
+**How it works in production:**
+1. Each server has its own Dockerfile with only the dependencies it needs
+2. Each server runs in its own container with its own port
+3. A service mesh or API gateway routes requests to the right server
+4. The AI client is configured with multiple server endpoints
+5. Each server scales independently based on demand
+
+**Container orchestration** (Kubernetes, ECS, Cloud Run) handles:
+- **Service discovery** — servers find each other by name, not IP address
+- **Health checks** — automatically restart failed containers
+- **Auto-scaling** — spin up more replicas when CPU/memory thresholds are hit
+- **Rolling deployments** — update one server without downtime
+
+### The MCP Gateway Pattern
+
+For microservices deployments, a common production pattern is an **MCP Gateway** — a thin proxy that sits between the AI client and your MCP servers:
+
+```
+AI Client
+    │
+    ▼
+┌────────────────────────────────┐
+│        MCP Gateway             │
+│  (routes tool calls to the     │
+│   correct backend server)      │
+│                                │
+│  - Authentication              │
+│  - Rate limiting               │
+│  - Request routing             │
+│  - Tool registry               │
+│  - Logging & monitoring        │
+└────────────────────────────────┘
+    │           │           │
+    ▼           ▼           ▼
+ Server A   Server B   Server C
+```
+
+**Why use a gateway:** The AI client only needs one connection URL. The gateway handles routing each tool call to the correct backend server. It also centralizes auth, rate limiting, and logging — things you'd otherwise duplicate in every server.
+
+---
+
+## 23. Scaling Strategies Explained
+
+### Horizontal Scaling (Adding More Replicas)
+
+The most straightforward scaling approach. You run multiple copies of the same MCP server behind a load balancer.
+
+**How it works:** When traffic increases, the orchestrator spins up additional identical containers. Each request goes to whichever replica is least busy. This works well for **stateless** MCP servers — servers that don't store data between requests (they call external databases/APIs instead).
+
+**Challenge with stateful servers:** If your MCP server maintains in-memory state (like a cache or session data), you need **sticky sessions** (routing the same client to the same replica) or **shared state** (using Redis/database so all replicas see the same data).
+
+### Vertical Scaling (Bigger Machines)
+
+Sometimes the right answer is just giving your server more CPU/RAM/GPU rather than adding replicas.
+
+**When vertical makes sense:**
+- GPU-bound work (embeddings, inference) — you need a bigger GPU, not more small ones
+- Memory-bound work (large vector stores in memory) — need more RAM
+- Single-threaded bottlenecks — more CPUs won't help if the code isn't concurrent
+
+### Auto-Scaling Triggers
+
+In production, you set rules for when to scale. Common triggers:
+
+| Trigger | What It Means | Example |
+|---------|---------------|---------|
+| **CPU utilization** | Server is compute-bound | Scale up when CPU > 70% for 5 minutes |
+| **Memory utilization** | Server needs more RAM | Scale up when memory > 80% |
+| **Request queue depth** | Requests are waiting | Scale up when queue > 50 pending |
+| **Response latency** | Users are waiting too long | Scale up when p95 latency > 2 seconds |
+| **Custom metrics** | Domain-specific signals | Scale up when embedding queue > 100 |
+
+### Scaling to Zero
+
+For MCP servers with sporadic traffic, **scale-to-zero** is powerful. Services like Cloud Run, AWS Lambda, or Azure Container Apps can shut down your server when there's no traffic and cold-start it when a request arrives.
+
+**Trade-off:** Cold start latency (1-5 seconds for containers, 100ms-1s for serverless) vs cost savings from not running idle containers.
+
+---
+
+## 24. Production Architecture Patterns
+
+### Pattern 1: Simple Production (Small Team)
+
+```
+┌──────────────────────────────────────────────────┐
+│                Cloud Run / ECS / ACA              │
+│                                                   │
+│   ┌────────────────────────────────────────┐     │
+│   │     MCP Server (Monolith)              │     │
+│   │     - All tools in one process         │     │
+│   │     - HTTP/SSE transport               │     │
+│   │     - 2-4 replicas behind LB           │     │
+│   └────────────────────────────────────────┘     │
+│                                                   │
+│   ┌───────────┐  ┌───────────┐  ┌───────────┐   │
+│   │  Redis    │  │ Postgres  │  │ Secrets   │   │
+│   │  (cache)  │  │  (data)   │  │ Manager   │   │
+│   └───────────┘  └───────────┘  └───────────┘   │
+└──────────────────────────────────────────────────┘
+```
+
+**Works for:** Most startups, internal tools, small-medium traffic. You get 80% of the production benefits with 20% of the complexity.
+
+### Pattern 2: Domain-Split Production (Growing Team)
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  Kubernetes / ECS                     │
+│                                                      │
+│  ┌──────────┐                                       │
+│  │  MCP     │  ← AI clients connect here            │
+│  │  Gateway │                                       │
+│  └────┬─────┘                                       │
+│       │                                              │
+│  ┌────┴──────────┬───────────────┬──────────────┐   │
+│  ▼               ▼               ▼              │   │
+│ ┌──────────┐ ┌──────────┐ ┌──────────────┐     │   │
+│ │ Data     │ │ DevOps   │ │ AI/ML        │     │   │
+│ │ Server   │ │ Server   │ │ Server (GPU) │     │   │
+│ │ 3 reps   │ │ 2 reps   │ │ 5 reps       │     │   │
+│ └──────────┘ └──────────┘ └──────────────┘     │   │
+│                                                      │
+│  Shared: Redis, Postgres, Vector DB, Secrets Manager │
+└─────────────────────────────────────────────────────┘
+```
+
+**Works for:** Companies with multiple teams, varying traffic patterns, and different compute needs per domain.
+
+### Pattern 3: Serverless / Event-Driven
+
+Instead of always-running containers, each MCP tool invocation triggers a serverless function:
+
+**How it works:**
+1. MCP Gateway receives a tool call
+2. Gateway routes to the appropriate Lambda/Cloud Function
+3. Function executes, returns result
+4. Function shuts down (or stays warm for a few minutes)
+
+**Best for:** Sporadic traffic, cost optimization, tools that are called infrequently but need to be available 24/7.
+
+**Not great for:** Low-latency requirements, tools that need persistent connections (WebSockets, database connection pools), or GPU workloads.
+
+---
+
+## 25. Security Considerations for Production MCP
+
+When running MCP servers in production, security becomes critical:
+
+### Authentication & Authorization
+
+- **Server-to-server auth**: Use mutual TLS (mTLS) or API keys between the gateway and backend MCP servers
+- **Client auth**: The MCP client should authenticate with the gateway using OAuth tokens or API keys
+- **Tool-level permissions**: Not every user should access every tool. The gateway can enforce role-based access — "analyst" role gets read-only database tools, "admin" role gets write tools too
+- **Scope limiting**: Each MCP server should only have credentials for the services it needs. The GitHub server shouldn't have database credentials.
+
+### Network Security
+
+- **Internal networking**: MCP servers should NOT be publicly accessible. Only the gateway is exposed.
+- **Encryption**: All communication should use TLS, even internal traffic in production
+- **Network policies**: In Kubernetes, use network policies to restrict which servers can talk to which services
+
+### Audit & Compliance
+
+- **Log every tool call**: Who called what tool, with what arguments, and what was returned
+- **Sensitive data masking**: Don't log database query results or file contents that might contain secrets
+- **Rate limiting**: Prevent runaway AI agents from making thousands of tool calls per minute
+
+---
+
+## 26. Monitoring & Observability
+
+In production, you need to know what your MCP servers are doing:
+
+### Key Metrics to Track
+
+| Metric | Why It Matters |
+|--------|---------------|
+| **Tool call latency** (p50, p95, p99) | Are users waiting too long? |
+| **Tool call success rate** | Are tools failing? |
+| **Active connections** | How many AI clients are connected? |
+| **Tool call volume** (per tool) | Which tools are hot? Which are unused? |
+| **Error rate by tool** | Is one specific tool causing problems? |
+| **Container resource usage** | CPU, memory, network — for scaling decisions |
+
+### Observability Stack
+
+A typical production setup uses:
+- **Structured logging** — JSON logs with tool name, duration, status, and correlation IDs
+- **Distributed tracing** — trace a request from AI client → gateway → MCP server → external API and back
+- **Dashboards** — Grafana/Datadog showing real-time tool call patterns
+- **Alerting** — PagerDuty/Slack alerts when error rate spikes or latency degrades
+
+### Health Checks
+
+Every MCP server should expose health check endpoints:
+- **Liveness**: "Is the process alive?" — restart if not
+- **Readiness**: "Can it handle requests?" — stop routing traffic if not (e.g., database connection lost)
+- **Startup**: "Has it finished initializing?" — don't send traffic until ready
+
+---
+
+## 27. MCP Architecture Decision Guide
+
+Use this flowchart when deciding how to architect your MCP servers:
+
+```
+Start: How many tools/domains do you have?
+│
+├─ < 5 tools, single domain
+│  → Monolith (single container)
+│  → Scale: horizontal replicas behind load balancer
+│
+├─ 5-15 tools, 2-3 domains
+│  → Hybrid (2-3 servers grouped by domain)
+│  → Scale: independently per domain server
+│
+├─ 15+ tools, many domains
+│  → Microservices with MCP Gateway
+│  → Scale: per-server with auto-scaling policies
+│
+└─ Sporadic/unpredictable traffic
+   → Serverless with gateway routing
+   → Scale: automatic, pay-per-invocation
+```
+
+### Quick Comparison Table
+
+| Factor | Monolith | Hybrid (2-4 servers) | Full Microservices |
+|--------|----------|---------------------|-------------------|
+| **Complexity** | Low | Medium | High |
+| **Deployment speed** | Fast | Medium | Slower (per service) |
+| **Scaling granularity** | All-or-nothing | Per domain group | Per individual server |
+| **Fault isolation** | None | Partial | Full |
+| **Team independence** | Low | Medium | High |
+| **Operational overhead** | Low | Medium | High |
+| **Best for** | Prototypes, small teams | Most production use cases | Large orgs, high scale |
+
+---
+
+## 28. Interview Quick Reference: MCP Architecture
+
+> **"How do you architect your MCP servers — one Docker container or split?"**
+
+**Sample answer:** "It depends on the scale and team structure. I typically start with a monolith — one Docker container with all tools — because it's simple to develop, test, and deploy. As the system grows, I move to a hybrid approach where I group related tools by domain into 2-4 separate containers. For example, data tools in one container, DevOps tools in another, and compute-heavy AI tools in their own GPU-enabled container. This gives me independent scaling and fault isolation where it matters most, without the operational overhead of managing 20 separate microservices.
+
+For production, I use an MCP Gateway pattern — a thin proxy that the AI client connects to. The gateway handles auth, rate limiting, and routes tool calls to the correct backend server. This way, the AI client only needs one connection URL regardless of how many backend servers exist.
+
+The key scaling decision is: are your tools stateless or stateful? Stateless tools are easy — just add more replicas behind a load balancer. Stateful tools need shared state (Redis for sessions, database for persistence) or sticky sessions. I also configure auto-scaling based on CPU utilization and request queue depth, with scale-to-zero for rarely-used tools to save costs."
+
+> **"How do you handle scalability for MCP servers?"**
+
+**Sample answer:** "There are three dimensions. First, horizontal scaling — running multiple replicas of the same server behind a load balancer. This handles increased traffic. Second, domain splitting — separating servers by domain so each can scale independently. If my RAG search server is getting 10x the traffic of my GitHub server, I scale them separately. Third, auto-scaling rules — I set thresholds on CPU, memory, and queue depth so the orchestrator (Kubernetes, ECS, Cloud Run) automatically adds or removes replicas. For sporadic workloads, I use scale-to-zero services like Cloud Run so I'm not paying for idle containers."
+
+---
+
+## 29. What's Next?
 
 Now try the practice problems:
 
