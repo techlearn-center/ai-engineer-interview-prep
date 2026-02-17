@@ -6,20 +6,147 @@
 
 ## Table of Contents
 
-1. [The Gap Between Demo and Production](#1-the-gap-between-demo-and-production)
-2. [Structuring an AI App for Production](#2-structuring-an-ai-app-for-production)
-3. [Containerization — Why Docker Matters for AI](#3-containerization--why-docker-matters-for-ai)
-4. [Choosing a Deployment Strategy](#4-choosing-a-deployment-strategy)
-5. [CI/CD for AI — What's Different](#5-cicd-for-ai--whats-different)
-6. [Testing AI Applications — The Four Layers](#6-testing-ai-applications--the-four-layers)
-7. [Deployment Patterns for AI](#7-deployment-patterns-for-ai)
-8. [Monitoring AI in Production](#8-monitoring-ai-in-production)
-9. [Security for AI Applications](#9-security-for-ai-applications)
-10. [The Production Readiness Checklist](#10-the-production-readiness-checklist)
+1. [AI Apps vs Normal Apps — What's Different?](#1-ai-apps-vs-normal-apps--whats-different)
+2. [The Gap Between Demo and Production](#2-the-gap-between-demo-and-production)
+3. [Structuring an AI App for Production](#3-structuring-an-ai-app-for-production)
+4. [Containerization — Why Docker Matters for AI](#4-containerization--why-docker-matters-for-ai)
+5. [Choosing a Deployment Strategy](#5-choosing-a-deployment-strategy)
+6. [CI/CD for AI — What's Different](#6-cicd-for-ai--whats-different)
+7. [Testing AI Applications — The Four Layers](#7-testing-ai-applications--the-four-layers)
+8. [Deployment Patterns for AI](#8-deployment-patterns-for-ai)
+9. [Monitoring AI in Production](#9-monitoring-ai-in-production)
+10. [Security for AI Applications](#10-security-for-ai-applications)
+11. [The Production Readiness Checklist](#11-the-production-readiness-checklist)
 
 ---
 
-## 1. The Gap Between Demo and Production
+## 1. AI Apps vs Normal Apps — What's Different?
+
+Before diving into deployment, it's important to understand what makes an AI application fundamentally different from a traditional software application — and where they overlap.
+
+### The Core Difference
+
+A **normal software app** is deterministic — the same input always gives the same output. A REST API takes a request, runs some logic, queries a database, and returns a predictable response. You can test it with exact assertions: `assert response == expected`.
+
+An **AI app** is non-deterministic — the same input can produce different outputs. It depends on external model APIs, retrieved context, and probabilistic generation. You can't test with exact assertions. Instead, you ask: "Is this answer *good enough*?" This single difference affects almost everything about how you build, test, deploy, and monitor.
+
+### What's the Same (You Already Know ~70%)
+
+The good news: most of the deployment stack is identical. If you know how to deploy a web app, you're 70% of the way to deploying an AI app.
+
+| Aspect | Same Tools? | Details |
+|--------|------------|---------|
+| **Language / Framework** | Yes | Python + FastAPI is the standard for both |
+| **Containerization** | Yes | Same Docker, same Dockerfile patterns |
+| **CI/CD Platform** | Yes | GitHub Actions, GitLab CI, Jenkins — all work the same |
+| **Deployment Target** | Yes | Cloud Run, ECS, Kubernetes — identical |
+| **Load Balancer** | Yes | ALB, nginx, Cloudflare — no difference |
+| **Secrets Management** | Yes | Same Secret Manager / Vault (just more API keys to manage) |
+| **Caching** | Yes | Same Redis — but AI apps add *semantic* caching |
+| **Auto-scaling** | Yes | Same HPA / auto-scaling groups — different bottleneck though |
+
+### What's Different (The ~30% That's New)
+
+| Aspect | Normal App | AI App |
+|--------|-----------|--------|
+| **Testing** | Exact assertions: `assert result == expected` | Quality metrics: "Is faithfulness >= 0.85?" |
+| **Cost model** | Fixed infrastructure cost ($200/mo) | Per-request API cost ($0.001-0.05 per query) that can spike |
+| **New infrastructure** | Just databases (PostgreSQL, Redis) | Add **vector databases** (Qdrant, Pinecone) for semantic search |
+| **What gets deployed** | Code | Code + prompts + models + data (each can change independently) |
+| **Monitoring** | "Is it up? Is it fast?" | Also: "Is the AI output still good? Is it hallucinating?" |
+| **Security threats** | SQL injection, XSS, CSRF | Add: prompt injection, data leakage, PII exposure, cost attacks |
+| **External dependency** | Optional (maybe 1-2 APIs) | Central — your entire app depends on an LLM API |
+| **Failure mode** | Obvious (500 error, wrong data) | Subtle (plausible-sounding but wrong answers) |
+
+### The 7 Things That Are Genuinely New
+
+**1. Your most important dependency is an external API**
+
+A normal app might call Stripe or Twilio occasionally. An AI app's **entire value** comes from the LLM API. If OpenAI is down, your app is useless. This means you need fallback models (OpenAI → Anthropic), aggressive retry logic, and your latency budget is dominated by the LLM call (1-3 seconds) rather than your code (50ms).
+
+**2. Testing requires a new layer: evaluation**
+
+Normal tests check "does this function return the right value?" AI tests check "is this answer good enough?" You need an **eval dataset** (50+ curated question-answer pairs) and metrics like retrieval recall, faithfulness, and hallucination rate. This eval layer doesn't exist in traditional software.
+
+**3. Cost is per-request, not just infrastructure**
+
+A normal app costs ~$200/month for servers regardless of traffic. An AI app paying $0.01 per GPT-4o request at 100K requests/day spends **$1,000/day** just on API fees. You need per-request cost tracking, budget alerts, model routing (cheap model for simple queries), and caching to control this.
+
+**4. You need vector databases (new infrastructure)**
+
+Normal apps use PostgreSQL and Redis. AI apps add a **vector database** (Qdrant, Pinecone, Weaviate, pgvector) to store and search document embeddings. This is an entirely new piece of infrastructure to deploy, manage, monitor, and back up.
+
+**5. "Deployment" means more than just code**
+
+In a normal app, deployment = ship new code. In an AI app, there are four things that can change independently, each requiring different testing:
+
+| What Changes | Example | Needs Eval? | Needs Code Deploy? |
+|-------------|---------|-------------|-------------------|
+| Code | New endpoint, bug fix | Sometimes | Yes |
+| Prompt | Different system prompt | **Yes** — behavior changes dramatically | No (config change) |
+| Model | Swap GPT-4o-mini for Claude Haiku | **Yes** — output quality changes | No (config change) |
+| Data | New documents indexed | **Yes** — retrieval quality changes | No |
+
+A prompt change that looks trivial can completely change response quality. Every type of change needs its own eval gate.
+
+**6. Monitoring has an extra dimension: output quality**
+
+Normal monitoring asks: "Is the server healthy?" AI monitoring adds: "Is the AI still giving good answers?" You need to sample production responses and evaluate them regularly. A 2% increase in hallucination rate won't trigger error alerts — it looks perfectly healthy from an infrastructure perspective.
+
+**7. New security attack vectors**
+
+| Normal App Threat | AI App Equivalent |
+|-------------------|-------------------|
+| SQL injection (manipulate database) | Prompt injection (manipulate AI behavior) |
+| Unauthorized data access | AI reveals other users' documents (data leakage) |
+| Data breach | AI includes PII (SSN, emails) in responses |
+| DDoS attack | Cost attack (send expensive queries to drain budget) |
+
+### The Deployment Stack Side-by-Side
+
+```
+NORMAL WEB APP:                       AI / RAG APP:
+
+Code (Python/Node)                    Code (Python/FastAPI)
+    │                                     │
+Docker                                Docker                     ← SAME
+    │                                     │
+GitHub Actions                        GitHub Actions             ← SAME
+  ├── Lint                              ├── Lint                  ← SAME
+  ├── Unit Tests                        ├── Unit Tests            ← SAME
+  ├── Integration Tests                 ├── Integration Tests     ← SAME
+  │                                     ├── Eval Tests            ← NEW
+  │                                     ├── Cost Check            ← NEW
+  ├── Build                             ├── Build                 ← SAME
+  └── Deploy                            └── Deploy (canary)       ← SAME
+    │                                     │
+Cloud Run / ECS / K8s                 Cloud Run / ECS / K8s      ← SAME
+    │                                     │
+PostgreSQL + Redis                    PostgreSQL + Redis          ← SAME
+                                      + Vector DB (Qdrant)       ← NEW
+                                      + LLM APIs (OpenAI)        ← NEW
+    │                                     │
+Prometheus + Grafana                  Prometheus + Grafana        ← SAME
+                                      + LLM Tracing (LangSmith)  ← NEW
+                                      + Cost Dashboard            ← NEW
+                                      + Quality Monitoring        ← NEW
+```
+
+### The Bottom Line
+
+If you know how to deploy a normal web app, you already understand Docker, CI/CD, cloud platforms, monitoring, and scaling. **That foundation carries over directly.** What you need to learn on top is:
+
+- **Eval testing** (the AI quality gate in your CI/CD pipeline)
+- **Vector databases** (new infrastructure to manage)
+- **Cost management** (per-request tracking, model routing, caching)
+- **Quality monitoring** (output quality, not just uptime)
+- **AI-specific security** (prompt injection, data leakage)
+
+The rest of this guide covers each of these in detail.
+
+---
+
+## 2. The Gap Between Demo and Production
 
 A Jupyter notebook that answers questions is **not** a production app. Here's what changes:
 
@@ -53,7 +180,7 @@ The three transformations you need to make:
 
 ---
 
-## 2. Structuring an AI App for Production
+## 3. Structuring an AI App for Production
 
 ### Why Structure Matters
 
@@ -119,7 +246,7 @@ This is the difference between a 2-second first response and a 200ms first respo
 
 ---
 
-## 3. Containerization — Why Docker Matters for AI
+## 4. Containerization — Why Docker Matters for AI
 
 ### The Problem Docker Solves
 
@@ -194,7 +321,7 @@ This gives every developer the same local environment — no "install Qdrant on 
 
 ---
 
-## 4. Choosing a Deployment Strategy
+## 5. Choosing a Deployment Strategy
 
 ### The Options
 
@@ -250,7 +377,7 @@ The pattern is always: store secrets in a dedicated secret manager → inject th
 
 ---
 
-## 5. CI/CD for AI — What's Different
+## 6. CI/CD for AI — What's Different
 
 ### Traditional CI/CD vs AI CI/CD
 
@@ -378,7 +505,7 @@ The integration test job is especially useful — GitHub Actions can spin up a r
 
 ---
 
-## 6. Testing AI Applications — The Four Layers
+## 7. Testing AI Applications — The Four Layers
 
 ### The Testing Pyramid for AI
 
@@ -537,7 +664,7 @@ This eliminates the risk of switching models — you have real data before commi
 
 ---
 
-## 7. Deployment Patterns for AI
+## 8. Deployment Patterns for AI
 
 ### Canary Deployments
 
@@ -604,7 +731,7 @@ Tools: LaunchDarkly, Unleash, or a simple config in your database. Useful for A/
 
 ---
 
-## 8. Monitoring AI in Production
+## 9. Monitoring AI in Production
 
 ### What's Different About Monitoring AI?
 
@@ -717,7 +844,7 @@ Your AI system was designed for specific types of queries. But user behavior cha
 
 ---
 
-## 9. Security for AI Applications
+## 10. Security for AI Applications
 
 ### AI-Specific Security Threats
 
@@ -761,7 +888,7 @@ Layer 4: INFRASTRUCTURE
 
 ---
 
-## 10. The Production Readiness Checklist
+## 11. The Production Readiness Checklist
 
 ### Before Going Live
 
