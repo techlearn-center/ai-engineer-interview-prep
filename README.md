@@ -11,8 +11,9 @@ Practice problems for AI/ML engineer coding interviews. Each problem has **tests
 | [`LEARN_FIRST.md`](10_system_design/LEARN_FIRST.md) | Complete system design guide: RAG architecture, LLM platforms, ML serving, MLOps, production considerations, trade-offs, interview Q&A | ~1,150 |
 | [`PRACTICE_SCENARIOS.md`](10_system_design/PRACTICE_SCENARIOS.md) | 5 full interview-style walkthroughs: Enterprise RAG chatbot, document processing pipeline, content moderation, multi-tenant LLM gateway, recommendation system | ~1,450 |
 | [`TRADEOFFS_AND_DECISIONS.md`](10_system_design/TRADEOFFS_AND_DECISIONS.md) | Decision guide: RAG vs fine-tuning, vector DB comparison, embedding models, LLM selection, chunking strategies, agent architectures, cost optimization | ~880 |
+| [`DEPLOYMENT_AND_TESTING.md`](10_system_design/DEPLOYMENT_AND_TESTING.md) | From notebook to production: Dockerizing AI apps, CI/CD pipelines (GitHub Actions), testing strategies (unit, integration, eval, load), monitoring, production checklist | ~870 |
 
-**Reading order:** LEARN_FIRST.md → PRACTICE_SCENARIOS.md → TRADEOFFS_AND_DECISIONS.md
+**Reading order:** LEARN_FIRST.md → PRACTICE_SCENARIOS.md → TRADEOFFS_AND_DECISIONS.md → DEPLOYMENT_AND_TESTING.md
 
 ---
 
