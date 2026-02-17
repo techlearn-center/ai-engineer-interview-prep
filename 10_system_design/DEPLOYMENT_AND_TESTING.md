@@ -1,1401 +1,873 @@
 # Deploying & Testing AI Applications in Production
 
-> **The missing guide.** Most AI tutorials stop at `model.predict()`. This guide covers everything after that — containerizing, deploying, setting up CI/CD, testing, and running AI apps in production.
+> Most AI tutorials stop at `model.predict()`. This guide explains everything after — how production AI apps are packaged, deployed, tested, and kept running. It focuses on **concepts and decision-making**, not just config files.
 
 ---
 
 ## Table of Contents
 
-1. [From Notebook to Production — The Full Journey](#1-from-notebook-to-production)
-2. [Containerizing AI Apps with Docker](#2-containerizing-ai-apps-with-docker)
-3. [Deploying to Production](#3-deploying-to-production)
-4. [CI/CD Pipelines for AI Apps](#4-cicd-pipelines-for-ai-apps)
-5. [Testing AI Applications](#5-testing-ai-applications)
-6. [Monitoring & Observability in Production](#6-monitoring--observability-in-production)
-7. [Production Checklist](#7-production-checklist)
+1. [The Gap Between Demo and Production](#1-the-gap-between-demo-and-production)
+2. [Structuring an AI App for Production](#2-structuring-an-ai-app-for-production)
+3. [Containerization — Why Docker Matters for AI](#3-containerization--why-docker-matters-for-ai)
+4. [Choosing a Deployment Strategy](#4-choosing-a-deployment-strategy)
+5. [CI/CD for AI — What's Different](#5-cicd-for-ai--whats-different)
+6. [Testing AI Applications — The Four Layers](#6-testing-ai-applications--the-four-layers)
+7. [Deployment Patterns for AI](#7-deployment-patterns-for-ai)
+8. [Monitoring AI in Production](#8-monitoring-ai-in-production)
+9. [Security for AI Applications](#9-security-for-ai-applications)
+10. [The Production Readiness Checklist](#10-the-production-readiness-checklist)
 
 ---
 
-## 1. From Notebook to Production
+## 1. The Gap Between Demo and Production
 
-### The Journey
+A Jupyter notebook that answers questions is **not** a production app. Here's what changes:
+
+| Concern | Demo/Notebook | Production |
+|---------|--------------|------------|
+| **Runs where** | Your laptop | Cloud server, available 24/7 |
+| **Handles errors** | Crashes, you restart | Must recover automatically |
+| **API keys** | Hardcoded in cell | Securely stored in secret manager |
+| **Multiple users** | Just you | Hundreds or thousands concurrently |
+| **Updates** | Re-run the notebook | Zero-downtime deployment |
+| **Cost tracking** | You check your OpenAI dashboard | Per-request logging, daily budgets, alerts |
+| **Quality** | "It seems to work" | Automated eval suite with pass/fail gates |
+| **Scaling** | Can't | Auto-scales with demand |
+
+### The Production Journey
 
 ```
-┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-│ Jupyter  │──▶│ Python   │──▶│ Docker   │──▶│ CI/CD    │──▶│Production│
-│ Notebook │   │ App      │   │ Container│   │ Pipeline │   │ (Cloud)  │
-│          │   │ (FastAPI) │   │          │   │          │   │          │
-│ Research │   │ Structure│   │ Package  │   │ Automate │   │ Deploy   │
-└──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
+RESEARCH           →  ENGINEERING         →  OPERATIONS
+
+Jupyter Notebook   →  Structured App      →  Deployed Service
+"It works on my     "It's packaged,        "It runs 24/7, auto-scales,
+ laptop"             tested, and             self-heals, and we know
+                     containerized"          when it's degrading"
 ```
 
-### Step 1: Structure Your Project
+The three transformations you need to make:
+
+1. **Notebook → Structured App**: Separate concerns (routes, services, config), add health checks, handle errors
+2. **App → Container**: Package everything reproducibly so it runs identically everywhere
+3. **Container → Production Service**: CI/CD, monitoring, scaling, security, cost controls
+
+---
+
+## 2. Structuring an AI App for Production
+
+### Why Structure Matters
+
+In a notebook, everything is in one file. In production, you separate concerns so that:
+- **Configs can change** without code changes (model name, temperature, chunk size)
+- **Services are testable** independently (test chunking without calling the LLM)
+- **Endpoints are clear** (health check, chat, admin routes)
+- **Startup is controlled** (load models once, not per-request)
+
+### The Standard Layout
 
 ```
 my-ai-app/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI entrypoint
-│   ├── config.py             # Settings (env vars, model paths)
-│   ├── models/
-│   │   ├── __init__.py
-│   │   └── schemas.py        # Pydantic request/response models
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── llm_service.py    # LLM API calls
-│   │   ├── rag_service.py    # RAG pipeline
-│   │   └── embedding_service.py
-│   ├── routers/
-│   │   ├── __init__.py
-│   │   ├── chat.py           # /api/chat endpoints
-│   │   └── health.py         # /health endpoint
-│   └── utils/
-│       ├── __init__.py
-│       └── prompts.py        # Prompt templates
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py           # Shared fixtures
-│   ├── unit/
-│   │   ├── test_prompts.py
-│   │   ├── test_chunking.py
-│   │   └── test_schemas.py
-│   ├── integration/
-│   │   ├── test_rag_pipeline.py
-│   │   └── test_api_endpoints.py
-│   └── eval/
-│       ├── test_retrieval_quality.py
-│       ├── test_generation_quality.py
-│       └── eval_dataset.json
-├── Dockerfile
-├── docker-compose.yml
-├── .github/
-│   └── workflows/
-│       ├── ci.yml            # Run tests on every PR
-│       └── deploy.yml        # Deploy on merge to main
-├── pyproject.toml             # Dependencies
-├── .env.example              # Environment variables template
-└── README.md
+│   ├── main.py           # FastAPI app — creates the server, registers routes
+│   ├── config.py          # All settings from environment variables
+│   ├── routers/           # HTTP endpoints (chat, health, admin)
+│   ├── services/          # Business logic (RAG pipeline, LLM calls, embedding)
+│   ├── models/            # Pydantic schemas for request/response validation
+│   └── utils/             # Prompt templates, helpers
+├── tests/                 # Unit, integration, and eval tests
+├── Dockerfile             # How to package the app
+├── docker-compose.yml     # Local dev environment (app + vector DB + Redis)
+├── .github/workflows/     # CI/CD pipelines
+├── .env.example           # Template showing required environment variables
+└── requirements.txt       # Dependencies
 ```
 
-### Step 2: The FastAPI App
+### Key Design Decisions
 
-```python
-# app/main.py
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from app.routers import chat, health
-from app.config import settings
-from app.services.rag_service import RAGService
+**1. Health Checks — Why You Need Two**
 
-# Initialize expensive resources once at startup
-rag_service = None
+Every production app needs at least two health endpoints:
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Load models and indexes at startup, clean up at shutdown."""
-    global rag_service
-    rag_service = RAGService(
-        vector_db_url=settings.VECTOR_DB_URL,
-        embedding_model=settings.EMBEDDING_MODEL,
-        llm_model=settings.LLM_MODEL,
-    )
-    await rag_service.initialize()
-    yield  # App runs here
-    await rag_service.shutdown()
+- `/health` — **Liveness probe**: "Is the process running?" Returns 200 if the app hasn't crashed. Kubernetes uses this to know when to restart a pod.
+- `/ready` — **Readiness probe**: "Can it handle traffic?" Checks that the vector DB is connected, the LLM API is reachable, and any models are loaded. Kubernetes uses this to know when to send traffic.
 
-app = FastAPI(title="My AI App", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"])
-app.include_router(health.router)
-app.include_router(chat.router, prefix="/api")
-```
+Why both? An app might be alive (process running) but not ready (database connection lost). Without a readiness probe, Kubernetes would send traffic to a broken instance.
 
-```python
-# app/config.py
-from pydantic_settings import BaseSettings
+**2. Configuration — Environment Variables, Not Hardcoded Values**
 
-class Settings(BaseSettings):
-    """All config comes from environment variables."""
-    OPENAI_API_KEY: str
-    VECTOR_DB_URL: str = "http://localhost:6333"
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
-    LLM_MODEL: str = "gpt-4o-mini"
-    LLM_TEMPERATURE: float = 0.1
-    LLM_MAX_TOKENS: int = 1024
-    CHUNK_SIZE: int = 512
-    CHUNK_OVERLAP: int = 50
-    TOP_K: int = 5
-    LOG_LEVEL: str = "INFO"
+Every setting that might change between environments (dev, staging, prod) should come from environment variables:
 
-    class Config:
-        env_file = ".env"
+- API keys (`OPENAI_API_KEY`)
+- Model names (`LLM_MODEL=gpt-4o-mini`)
+- Tuning parameters (`CHUNK_SIZE=512`, `TOP_K=5`, `LLM_TEMPERATURE=0.1`)
+- Service URLs (`VECTOR_DB_URL=http://qdrant:6333`)
 
-settings = Settings()
-```
+**Why?** You can change the model from `gpt-4o-mini` to `claude-haiku` by updating one environment variable — no code change, no redeploy. This is critical for A/B testing and cost optimization.
 
-```python
-# app/routers/health.py
-from fastapi import APIRouter
+Use a library like `pydantic-settings` to validate that all required variables are present at startup (fail fast, not when the first request arrives).
 
-router = APIRouter()
+**3. Startup vs Per-Request — Load Expensive Things Once**
 
-@router.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+Loading a model, connecting to a vector DB, or initializing an embedding pipeline takes seconds. Don't do it on every request.
 
-@router.get("/ready")
-async def readiness_check():
-    """Check that all dependencies are available."""
-    # Check vector DB connection
-    # Check LLM API reachability
-    return {"status": "ready", "vector_db": "connected", "llm": "reachable"}
-```
+Use FastAPI's **lifespan** pattern:
+- **At startup**: Connect to vector DB, load embedding models, warm up caches
+- **Per request**: Use the pre-loaded resources to answer queries
+- **At shutdown**: Close connections gracefully, flush logs
 
-```python
-# app/routers/chat.py
-from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
-from app.models.schemas import ChatRequest, ChatResponse
-from app.main import rag_service
-
-router = APIRouter()
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    response = await rag_service.query(
-        question=request.message,
-        conversation_history=request.history,
-    )
-    return ChatResponse(
-        answer=response.answer,
-        sources=response.sources,
-        tokens_used=response.tokens_used,
-    )
-
-@router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
-    async def generate():
-        async for chunk in rag_service.stream_query(request.message):
-            yield f"data: {chunk}\n\n"
-        yield "data: [DONE]\n\n"
-    return StreamingResponse(generate(), media_type="text/event-stream")
-```
+This is the difference between a 2-second first response and a 200ms first response.
 
 ---
 
-## 2. Containerizing AI Apps with Docker
+## 3. Containerization — Why Docker Matters for AI
 
-### Basic Dockerfile for an AI App
+### The Problem Docker Solves
 
-```dockerfile
-# Dockerfile
-FROM python:3.11-slim
+"It works on my machine" is the #1 deployment problem. AI apps are especially fragile because they depend on:
+- Specific Python versions
+- ML library versions (PyTorch, Transformers, etc.)
+- System libraries (for OCR, PDF parsing, etc.)
+- Downloaded model files
 
-# Set working directory
-WORKDIR /app
+Docker creates an **identical environment** everywhere — your laptop, CI server, and production cloud.
 
-# Install system dependencies (for some ML libraries)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+### How Docker Works for AI Apps
 
-# Copy dependency files first (Docker layer caching)
-COPY pyproject.toml .
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY app/ app/
-
-# Create non-root user (security best practice)
-RUN useradd --create-home appuser
-USER appuser
-
-# Expose port
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
 ```
+Dockerfile = Recipe:
+  "Start with Python 3.11
+   Install these Python packages
+   Copy my application code
+   Run the server on port 8000"
+
+Docker Image = Snapshot:
+  Everything packaged into a single file (~500MB-2GB for AI apps)
+
+Docker Container = Running Instance:
+  The image actually running, serving requests
+```
+
+### AI-Specific Docker Considerations
+
+| Consideration | What It Means | Solution |
+|---------------|---------------|----------|
+| **Large images** | ML libraries make images 2-5 GB | Use multi-stage builds: install in stage 1, copy only needed files to stage 2 |
+| **Model files** | Downloaded models add 500MB-5GB | Download during build (cached in layers) or load from cloud storage at startup |
+| **GPU support** | Some models need NVIDIA GPUs | Use `nvidia/cuda` base images, deploy to GPU instances |
+| **Slow builds** | `pip install` takes 5-10 min | Copy `requirements.txt` before source code → Docker caches the install layer |
+| **Security** | Container shouldn't run as root | Add `USER appuser` — limits damage if the container is compromised |
+| **Secrets** | API keys must not be in the image | Pass via environment variables at runtime, never `COPY .env` |
+| **Health checks** | Container platform needs to know when app is ready | Add `HEALTHCHECK` instruction pointing to your `/health` endpoint |
+
+### Multi-Stage Builds Explained
+
+Multi-stage builds solve the "image too big" problem:
+
+```
+Stage 1 (Builder):                    Stage 2 (Production):
+┌─────────────────────┐               ┌─────────────────────┐
+│ Full Python + GCC   │               │ Slim Python only    │
+│ + all build tools   │    Copy only  │                     │
+│ + source code       │ ─────────────▶│ + installed packages│
+│ + pip install       │  what's needed│ + app code          │
+│ SIZE: ~2.5 GB       │               │ SIZE: ~800 MB       │
+└─────────────────────┘               └─────────────────────┘
+```
+
+Stage 1 installs everything (including build tools like GCC for C extensions). Stage 2 starts fresh with a slim image and only copies the installed packages and app code. Build tools, source distributions, and caches are left behind.
 
 ### Docker Compose for Local Development
 
-```yaml
-# docker-compose.yml
-version: "3.8"
+In production, your AI app depends on multiple services:
 
-services:
-  app:
-    build: .
-    ports:
-      - "8000:8000"
-    env_file:
-      - .env
-    depends_on:
-      qdrant:
-        condition: service_healthy
-    volumes:
-      - ./app:/app/app  # Hot reload in dev
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-volumes:
-  qdrant_data:
+```
+┌────────────┐     ┌────────────┐     ┌────────────┐
+│  Your App  │────▶│ Vector DB  │     │   Redis    │
+│  (FastAPI) │     │ (Qdrant)   │     │  (Cache)   │
+│  Port 8000 │     │ Port 6333  │     │ Port 6379  │
+└────────────┘     └────────────┘     └────────────┘
 ```
 
-### Docker Best Practices for AI Apps
+Docker Compose defines all services in one file and starts them together with `docker compose up`. It handles networking (services find each other by name), volume persistence (vector DB data survives restarts), and dependency ordering (app waits for Qdrant to be healthy before starting).
 
-| Practice | Why | Example |
-|----------|-----|---------|
-| Multi-stage builds | Smaller image (no build tools in prod) | `FROM python:3.11 AS builder` then `FROM python:3.11-slim` |
-| Layer caching | Faster rebuilds when only code changes | Copy `requirements.txt` before `COPY . .` |
-| Non-root user | Security — limit container privileges | `RUN useradd appuser && USER appuser` |
-| .dockerignore | Don't copy unnecessary files | Ignore `.git`, `__pycache__`, `.env`, `venv` |
-| Pin versions | Reproducible builds | `FROM python:3.11.7-slim` not `python:latest` |
-| Health checks | K8s/ECS knows when app is ready | `HEALTHCHECK CMD curl -f /health` |
-| No secrets in image | Security — use env vars at runtime | Never `COPY .env` into the image |
-
-### Multi-Stage Build (For Apps with ML Model Files)
-
-```dockerfile
-# Stage 1: Build and download model
-FROM python:3.11 AS builder
-WORKDIR /build
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-# Download model files during build (cached in layer)
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
-
-# Stage 2: Production image (smaller)
-FROM python:3.11-slim
-WORKDIR /app
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /root/.cache/torch /root/.cache/torch
-COPY app/ app/
-RUN useradd --create-home appuser && chown -R appuser /app
-USER appuser
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
+This gives every developer the same local environment — no "install Qdrant on your machine" instructions.
 
 ---
 
-## 3. Deploying to Production
+## 4. Choosing a Deployment Strategy
 
-### Deployment Options Comparison
+### The Options
 
-| Option | Best For | Cost | Complexity | Scale |
-|--------|----------|------|------------|-------|
-| **Railway / Render** | MVPs, side projects | $5-20/mo | Very Low | Low |
-| **AWS ECS / Fargate** | Containers without K8s | $50-500/mo | Medium | Medium-High |
-| **AWS EKS / GKE** | Large-scale, multi-service | $200+/mo | High | Very High |
-| **GCP Cloud Run** | Serverless containers | Pay-per-use | Low | Medium-High |
-| **Azure Container Apps** | Serverless containers | Pay-per-use | Low | Medium-High |
-| **Fly.io** | Global edge deployment | $10-100/mo | Low | Medium |
-| **Modal** | ML/AI-specific serverless | Pay-per-use | Low | High |
-| **Replicate** | Model serving only | Pay-per-use | Very Low | High |
+| Approach | Best For | Monthly Cost | Ops Effort | When to Choose |
+|----------|----------|-------------|------------|----------------|
+| **Serverless Containers** (Cloud Run, Azure Container Apps) | Most AI apps | $30-200 | Very Low | You want to focus on the AI, not infra. Auto-scales to zero when idle |
+| **Managed Containers** (ECS Fargate) | Mid-size apps | $100-500 | Low-Medium | You need more control than serverless but don't want K8s |
+| **Kubernetes** (EKS, GKE) | Large, multi-service platforms | $200+ | High | Multiple services, strict requirements, GPU orchestration |
+| **PaaS** (Railway, Render, Fly.io) | MVPs, side projects | $5-50 | Minimal | "Just deploy my Docker image" |
+| **AI-Specific** (Modal, Replicate, Together AI) | Model serving | Pay-per-use | Minimal | Serving open-source models, GPU-heavy workloads |
 
-### Option A: Deploy to GCP Cloud Run (Recommended for Most AI Apps)
+### Decision Flowchart
 
-```bash
-# 1. Build and push Docker image to Google Container Registry
-gcloud builds submit --tag gcr.io/MY_PROJECT/my-ai-app
-
-# 2. Deploy to Cloud Run
-gcloud run deploy my-ai-app \
-  --image gcr.io/MY_PROJECT/my-ai-app \
-  --platform managed \
-  --region us-central1 \
-  --memory 2Gi \
-  --cpu 2 \
-  --min-instances 1 \          # Keep warm (avoid cold starts)
-  --max-instances 10 \         # Auto-scale up to 10
-  --set-env-vars "OPENAI_API_KEY=sk-..." \
-  --allow-unauthenticated
-
-# 3. Get the URL
-gcloud run services describe my-ai-app --format='value(status.url)'
-# → https://my-ai-app-xxxx-uc.a.run.app
+```
+Is this a side project or MVP?
+├── Yes → Railway / Render / Fly.io (cheapest, simplest)
+└── No → Do you need GPUs for model inference?
+    ├── Yes → Modal / Replicate (GPU serverless) or K8s with GPU nodes
+    └── No → How many services?
+        ├── 1-2 services → Cloud Run / Azure Container Apps (serverless)
+        ├── 3-5 services → ECS Fargate (managed containers)
+        └── 5+ services → Kubernetes (full orchestration)
 ```
 
-**Cost estimate:** ~$30-100/month for a RAG app with moderate traffic.
+### What Happens During a Deployment
 
-### Option B: Deploy to AWS ECS with Fargate
+Regardless of platform, a deployment follows this flow:
 
-```bash
-# 1. Create ECR repository
-aws ecr create-repository --repository-name my-ai-app
-
-# 2. Build and push
-aws ecr get-login-password | docker login --username AWS --password-stdin ACCOUNT.dkr.ecr.REGION.amazonaws.com
-docker build -t my-ai-app .
-docker tag my-ai-app:latest ACCOUNT.dkr.ecr.REGION.amazonaws.com/my-ai-app:latest
-docker push ACCOUNT.dkr.ecr.REGION.amazonaws.com/my-ai-app:latest
-
-# 3. Create ECS service (via console, CDK, or Terraform)
-# Task definition → Service → Load Balancer → Domain
+```
+1. BUILD       → Docker image from your code
+2. PUSH        → Image to a container registry (ECR, GCR, Docker Hub)
+3. DEPLOY      → Platform pulls image, starts new containers
+4. HEALTH CHECK → Platform verifies /health and /ready return 200
+5. TRAFFIC SHIFT → Platform routes traffic from old → new containers
+6. SCALE DOWN  → Old containers are stopped
 ```
 
-### Option C: Deploy to Kubernetes (EKS/GKE)
-
-```yaml
-# k8s/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ai-app
-  labels:
-    app: ai-app
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: ai-app
-  template:
-    metadata:
-      labels:
-        app: ai-app
-    spec:
-      containers:
-        - name: ai-app
-          image: gcr.io/my-project/my-ai-app:v1.2.0
-          ports:
-            - containerPort: 8000
-          env:
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: ai-app-secrets
-                  key: openai-api-key
-            - name: VECTOR_DB_URL
-              value: "http://qdrant:6333"
-          resources:
-            requests:
-              cpu: "500m"
-              memory: "1Gi"
-            limits:
-              cpu: "2"
-              memory: "4Gi"
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: 8000
-            initialDelaySeconds: 10
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 10
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: ai-app
-spec:
-  selector:
-    app: ai-app
-  ports:
-    - port: 80
-      targetPort: 8000
-  type: ClusterIP
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: ai-app-hpa
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: ai-app
-  minReplicas: 2
-  maxReplicas: 20
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-```
+**Key concept: Zero-downtime deployment.** The platform runs both old and new versions simultaneously during step 5. Old containers keep serving until new ones pass health checks. Users never see an error.
 
 ### Secrets Management
 
-**Never hardcode API keys.** Here's how to manage them by platform:
+API keys (OpenAI, Anthropic, etc.) are the #1 security risk in AI apps. The rule is simple: **secrets should never be in your code, Docker image, or git repository.**
 
-| Platform | How to Set Secrets |
-|----------|-------------------|
-| Cloud Run | `gcloud run deploy --set-env-vars` or Secret Manager |
-| ECS | AWS Secrets Manager → Task Definition |
-| Kubernetes | `kubectl create secret` or External Secrets Operator |
-| Railway/Render | Dashboard → Environment Variables |
-| Local | `.env` file (never commit to git) |
+| Environment | Where Secrets Live |
+|-------------|-------------------|
+| Local dev | `.env` file (added to `.gitignore`) |
+| CI/CD | GitHub Secrets (encrypted, injected at runtime) |
+| Cloud Run | GCP Secret Manager → mounted as env vars |
+| Kubernetes | K8s Secrets or External Secrets Operator |
+| ECS | AWS Secrets Manager → referenced in task definition |
 
-```bash
-# Kubernetes: Create secret
-kubectl create secret generic ai-app-secrets \
-  --from-literal=openai-api-key=sk-xxx \
-  --from-literal=qdrant-api-key=xxx
-
-# GCP Secret Manager
-echo -n "sk-xxx" | gcloud secrets create openai-api-key --data-file=-
-```
+The pattern is always: store secrets in a dedicated secret manager → inject them as environment variables at container startup → your app reads them from `os.environ`.
 
 ---
 
-## 4. CI/CD Pipelines for AI Apps
+## 5. CI/CD for AI — What's Different
 
-### What's Different About AI CI/CD?
+### Traditional CI/CD vs AI CI/CD
 
-Traditional apps test: "Does the code work?"
-AI apps also test: "Does the model perform well enough?"
+Traditional software CI/CD asks: **"Does the code work?"**
+AI CI/CD adds: **"Does the AI perform well enough?"**
 
 ```
-TRADITIONAL CI/CD:
-  Code → Lint → Unit Tests → Integration Tests → Deploy
+TRADITIONAL CI/CD PIPELINE:
 
-AI CI/CD (additional steps):
-  Code → Lint → Unit Tests → Integration Tests
-    → Eval Tests (retrieval quality, LLM output quality)
-    → Cost Check (estimated API costs within budget?)
-    → Performance Gate (latency within bounds?)
-    → Deploy (canary → full)
-    → Post-deploy monitoring (drift, quality)
+  Push Code → Lint → Unit Tests → Integration Tests → Build → Deploy
+                                                         │
+                                                    All pass?
+                                                    Yes → Ship it
+
+AI CI/CD PIPELINE (additional stages):
+
+  Push Code → Lint → Unit Tests → Integration Tests
+                                        │
+                                        ▼
+                              ┌─────────────────────┐
+                              │  EVAL TESTS          │  ← NEW: AI-specific
+                              │                      │
+                              │  - Retrieval quality  │  "Did we find the right docs?"
+                              │  - Answer quality     │  "Is the answer correct?"
+                              │  - Hallucination rate │  "Did it make things up?"
+                              │  - Latency check      │  "Is it fast enough?"
+                              │  - Cost estimate      │  "Are we within budget?"
+                              └─────────┬─────────────┘
+                                        │
+                                  All pass?
+                                  Yes ▼
+                              ┌─────────────────────┐
+                              │  BUILD & DEPLOY      │
+                              │                      │
+                              │  Build Docker image   │
+                              │  Deploy canary (10%) │
+                              │  Monitor for 5 min   │
+                              │  Promote to 100%     │
+                              └─────────────────────┘
+                                        │
+                                        ▼
+                              ┌─────────────────────┐
+                              │  POST-DEPLOY         │  ← NEW: ongoing
+                              │                      │
+                              │  - Monitor drift      │
+                              │  - Track cost/day     │
+                              │  - Sample quality     │
+                              └─────────────────────┘
 ```
 
-### GitHub Actions: Complete CI Pipeline
+### The Three CI/CD Pipelines You Need
 
-```yaml
-# .github/workflows/ci.yml
-name: CI Pipeline
+**Pipeline 1: CI (runs on every pull request)**
 
-on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+This is fast and cheap. It catches code bugs before they reach `main`.
 
-env:
-  PYTHON_VERSION: "3.11"
+| Step | Purpose | Runtime | Cost |
+|------|---------|---------|------|
+| Lint + Format | Catch style issues | 30s | Free |
+| Type Check | Catch type errors | 30s | Free |
+| Unit Tests | Verify functions work | 1 min | Free |
+| Integration Tests | Verify components work together | 3 min | Free (uses mocked LLM) |
+| Docker Build | Verify the image builds | 2 min | Free |
+| Eval Tests | Verify AI quality hasn't regressed | 5-10 min | ~$0.50-2 per run (real LLM calls) |
 
-jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install linters
-        run: pip install ruff mypy
-      - name: Run ruff (linting + formatting)
-        run: ruff check . && ruff format --check .
-      - name: Run mypy (type checking)
-        run: mypy app/ --ignore-missing-imports
+**Pipeline 2: Deploy (runs on merge to main)**
 
-  unit-tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-test.txt
-      - name: Run unit tests
-        run: pytest tests/unit/ -v --tb=short --junitxml=results/unit.xml
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: results/unit.xml
+| Step | Purpose | How |
+|------|---------|-----|
+| Build Docker image | Create production image | `docker build` with Git SHA as tag |
+| Push to registry | Store image | Push to GCR / ECR / Docker Hub |
+| Deploy canary | Test in production with 10% traffic | Deploy tagged revision, split traffic |
+| Health check | Verify canary is healthy | Monitor error rate and latency for 5 minutes |
+| Promote or rollback | Full deployment or revert | If healthy → 100% traffic. If errors → roll back to previous version |
+| Notify team | Visibility | Slack message with deploy status |
 
-  integration-tests:
-    runs-on: ubuntu-latest
-    services:
-      qdrant:
-        image: qdrant/qdrant:latest
-        ports:
-          - 6333:6333
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-test.txt
-      - name: Run integration tests
-        env:
-          VECTOR_DB_URL: http://localhost:6333
-          REDIS_URL: redis://localhost:6379
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: pytest tests/integration/ -v --tb=short
+**Pipeline 3: Model Update (manually triggered)**
 
-  eval-tests:
-    runs-on: ubuntu-latest
-    # Only run eval on PRs (expensive, uses real LLM API)
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-test.txt
-      - name: Run evaluation tests
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: pytest tests/eval/ -v --tb=short
-      - name: Check eval thresholds
-        run: python scripts/check_eval_results.py
-        # Fails if: retrieval_relevance < 0.7 or hallucination_rate > 0.1
+When you change models (e.g., swap `gpt-4o-mini` for `claude-haiku`, or update your embedding model), you need a separate pipeline because:
 
-  docker-build:
-    runs-on: ubuntu-latest
-    needs: [lint, unit-tests]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Docker image
-        run: docker build -t my-ai-app:${{ github.sha }} .
-      - name: Run container smoke test
-        run: |
-          docker run -d --name test-app -p 8000:8000 \
-            -e OPENAI_API_KEY=test \
-            -e VECTOR_DB_URL=http://localhost:6333 \
-            my-ai-app:${{ github.sha }}
-          sleep 5
-          curl -f http://localhost:8000/health || exit 1
-          docker stop test-app
-```
+- It's not a code change — it's a config/model change
+- The impact is different — the same code might produce very different outputs
+- It needs its own eval comparison — "Is the new model at least as good?"
 
-### GitHub Actions: Deploy Pipeline
+| Step | Purpose |
+|------|---------|
+| Run eval suite with new model | Generate quality scores |
+| Compare with production model | New model must be >= current on all metrics |
+| Estimate cost impact | Will this save or cost more money? |
+| Deploy with canary | Test with real traffic |
+| Monitor + promote | Same canary flow as code deploys |
 
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy to Production
+### Eval Gates — The AI-Specific Quality Gate
 
-on:
-  push:
-    branches: [main]
+The key innovation in AI CI/CD is the **eval gate**: an automated check that blocks deployment if AI quality drops below a threshold.
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    # Only deploy if CI passed
-    needs: []
-    steps:
-      - uses: actions/checkout@v4
+| Gate | Threshold | What It Prevents |
+|------|-----------|-----------------|
+| Retrieval Recall@5 >= 0.80 | Must find the correct document in top 5 results, 80% of the time | Broken retrieval (wrong chunks, bad embeddings) |
+| Faithfulness >= 0.85 | 85% of answer claims must be grounded in retrieved context | Hallucination increase |
+| Answer Relevance >= 0.80 | 80% of answers must address the actual question | Off-topic or generic responses |
+| P99 Latency <= 5s | 99th percentile response time under 5 seconds | Performance regression |
+| Estimated daily cost <= $X | Cost within budget | Accidentally using expensive model |
 
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+**How it works:**
+1. You maintain a curated **eval dataset** — 50-100 question-answer pairs with known-correct sources
+2. CI runs your RAG pipeline against this dataset
+3. A script compares the results against thresholds
+4. If any metric is below threshold → CI fails → deployment blocked
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+This is the AI equivalent of "all tests must pass before merging."
 
-      - name: Build and push to Container Registry
-        run: |
-          gcloud builds submit \
-            --tag gcr.io/${{ secrets.GCP_PROJECT }}/my-ai-app:${{ github.sha }}
+### Implementing in GitHub Actions
 
-      - name: Deploy to Cloud Run (Canary - 10%)
-        run: |
-          gcloud run deploy my-ai-app \
-            --image gcr.io/${{ secrets.GCP_PROJECT }}/my-ai-app:${{ github.sha }} \
-            --region us-central1 \
-            --tag canary \
-            --no-traffic
+GitHub Actions is the most common CI/CD platform. Key concepts:
 
-          # Send 10% of traffic to canary
-          gcloud run services update-traffic my-ai-app \
-            --region us-central1 \
-            --to-tags canary=10
+- **Workflows** (`.github/workflows/*.yml`): Define what runs and when
+- **Triggers**: `on: pull_request` (every PR) or `on: push to main` (every merge)
+- **Jobs**: Independent stages that run in parallel (lint, test, build)
+- **Services**: Spin up Docker containers (Qdrant, Redis) for integration tests
+- **Secrets**: Encrypted variables (API keys) injected at runtime via `${{ secrets.NAME }}`
+- **Artifacts**: Save test results, coverage reports for later review
 
-      - name: Wait and check canary health (5 min)
-        run: |
-          sleep 300
-          # Check error rate on canary
-          python scripts/check_canary_health.py \
-            --service my-ai-app \
-            --tag canary \
-            --max-error-rate 0.05
-
-      - name: Promote canary to 100%
-        run: |
-          gcloud run services update-traffic my-ai-app \
-            --region us-central1 \
-            --to-latest
-
-      - name: Notify team
-        uses: slackapi/slack-github-action@v1
-        with:
-          payload: |
-            {"text": "Deployed my-ai-app ${{ github.sha }} to production"}
-```
-
-### CI/CD for Model Updates (Not Just Code)
-
-When you retrain or swap models, CI/CD needs additional gates:
-
-```yaml
-# .github/workflows/model-update.yml
-name: Model Update Pipeline
-
-on:
-  workflow_dispatch:
-    inputs:
-      model_version:
-        description: "New model version to deploy"
-        required: true
-      model_type:
-        description: "Type of model update"
-        required: true
-        type: choice
-        options:
-          - embedding_model
-          - llm_model
-          - reranker_model
-
-jobs:
-  validate-model:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run eval suite with new model
-        env:
-          NEW_MODEL: ${{ inputs.model_version }}
-        run: |
-          # Run the full eval suite with the new model
-          python scripts/run_eval.py \
-            --model-type ${{ inputs.model_type }} \
-            --model-version ${{ inputs.model_version }} \
-            --output results/eval_new.json
-
-      - name: Compare with current production model
-        run: |
-          python scripts/compare_eval.py \
-            --current results/eval_current.json \
-            --new results/eval_new.json \
-            --fail-if-regression
-
-      - name: Check cost impact
-        run: |
-          python scripts/estimate_cost.py \
-            --model ${{ inputs.model_version }} \
-            --traffic-estimate 50000
-
-  deploy-model:
-    needs: validate-model
-    runs-on: ubuntu-latest
-    steps:
-      - name: Update model config
-        run: |
-          # Update the model version in config/environment
-          gcloud run services update my-ai-app \
-            --update-env-vars "${{ inputs.model_type }}=${{ inputs.model_version }}"
-
-      - name: Verify deployment
-        run: |
-          python scripts/smoke_test.py --url https://my-ai-app.run.app/api/chat
-```
+The integration test job is especially useful — GitHub Actions can spin up a real Qdrant and Redis container as "services" alongside your test runner, giving you a realistic environment without any external infrastructure.
 
 ---
 
-## 5. Testing AI Applications
+## 6. Testing AI Applications — The Four Layers
 
-### The Testing Pyramid for AI Apps
+### The Testing Pyramid for AI
 
 ```
-                    ┌───────────────┐
-                    │   E2E Tests   │  ← Few, expensive, slow
-                    │  (full flow)  │     Test: "User asks question → gets good answer"
-                    ├───────────────┤
-                    │  Eval Tests   │  ← AI-specific quality tests
-                    │(retrieval,    │     Test: "Is the retrieval relevant? Is the answer faithful?"
-                    │ generation)   │
-                    ├───────────────┤
-                    │ Integration   │  ← Test component interactions
-                    │  Tests        │     Test: "API → RAG pipeline → returns response"
-                    │               │
-                    ├───────────────┤
-                    │  Unit Tests   │  ← Many, fast, cheap
-                    │               │     Test: "Chunker splits correctly" "Prompt formats correctly"
-                    └───────────────┘
+                    ┌──────────────────┐
+                    │   E2E Tests      │  Few, slow, expensive
+                    │ "Full user flow" │  Run: before release
+                    ├──────────────────┤
+                    │   Eval Tests     │  AI-specific quality
+                    │ "Is the AI good?"│  Run: on PRs (sampled)
+                    ├──────────────────┤
+                    │ Integration Tests│  Component interaction
+                    │ "Do parts work   │  Run: on every PR
+                    │  together?"      │
+                    ├──────────────────┤
+                    │   Unit Tests     │  Many, fast, free
+                    │ "Does each       │  Run: on every commit
+                    │  function work?" │
+                    └──────────────────┘
 ```
 
-### 5.1 Unit Tests (Fast, Run on Every Commit)
-
-Unit tests verify individual functions work correctly — **no LLM API calls needed**.
-
-```python
-# tests/unit/test_chunking.py
-import pytest
-from app.services.chunking import chunk_text, RecursiveChunker
-
-class TestChunking:
-    def test_chunk_respects_max_size(self):
-        text = "Hello world. " * 1000  # Long text
-        chunks = chunk_text(text, chunk_size=512, overlap=50)
-        for chunk in chunks:
-            assert len(chunk.split()) <= 520  # Some tolerance
-
-    def test_chunk_overlap(self):
-        text = "Sentence one. Sentence two. Sentence three. Sentence four."
-        chunks = chunk_text(text, chunk_size=20, overlap=10)
-        # Verify overlap exists between consecutive chunks
-        for i in range(len(chunks) - 1):
-            overlap = set(chunks[i].split()) & set(chunks[i + 1].split())
-            assert len(overlap) > 0
-
-    def test_empty_text_returns_empty(self):
-        chunks = chunk_text("", chunk_size=512, overlap=50)
-        assert chunks == []
-
-    def test_short_text_returns_single_chunk(self):
-        chunks = chunk_text("Short text.", chunk_size=512, overlap=50)
-        assert len(chunks) == 1
-        assert chunks[0] == "Short text."
-```
-
-```python
-# tests/unit/test_prompts.py
-from app.utils.prompts import build_rag_prompt, format_sources
-
-class TestPromptBuilding:
-    def test_prompt_includes_context(self):
-        prompt = build_rag_prompt(
-            question="What is our refund policy?",
-            context_chunks=["Refunds are processed within 30 days."],
-            history=[]
-        )
-        assert "refund" in prompt.lower()
-        assert "30 days" in prompt
-
-    def test_prompt_includes_history(self):
-        prompt = build_rag_prompt(
-            question="Tell me more",
-            context_chunks=["Some context"],
-            history=[
-                {"role": "user", "content": "What is RAG?"},
-                {"role": "assistant", "content": "RAG is Retrieval-Augmented Generation."}
-            ]
-        )
-        assert "What is RAG?" in prompt
-
-    def test_format_sources_creates_citations(self):
-        sources = format_sources([
-            {"title": "Policy Guide", "url": "/docs/policy", "relevance": 0.95},
-            {"title": "FAQ", "url": "/docs/faq", "relevance": 0.82},
-        ])
-        assert "Policy Guide" in sources
-        assert "/docs/policy" in sources
-
-    def test_prompt_has_max_context_limit(self):
-        """Ensure we don't exceed context window."""
-        huge_context = ["x" * 10000] * 100
-        prompt = build_rag_prompt("question", huge_context, [])
-        # Should truncate to fit within token limit
-        assert len(prompt) < 100000  # Rough character limit
-```
-
-```python
-# tests/unit/test_schemas.py
-import pytest
-from pydantic import ValidationError
-from app.models.schemas import ChatRequest, ChatResponse
-
-class TestSchemas:
-    def test_valid_chat_request(self):
-        req = ChatRequest(message="Hello", history=[])
-        assert req.message == "Hello"
-
-    def test_empty_message_rejected(self):
-        with pytest.raises(ValidationError):
-            ChatRequest(message="", history=[])
-
-    def test_message_too_long_rejected(self):
-        with pytest.raises(ValidationError):
-            ChatRequest(message="x" * 50001, history=[])
-
-    def test_chat_response_includes_sources(self):
-        resp = ChatResponse(
-            answer="The refund policy is 30 days.",
-            sources=[{"title": "Policy", "url": "/docs"}],
-            tokens_used=150
-        )
-        assert len(resp.sources) == 1
-```
-
-### 5.2 Integration Tests (Test Component Interactions)
-
-Integration tests verify that components work together. Use **real services** (vector DB, Redis) but **mock expensive LLM calls**.
-
-```python
-# tests/integration/test_rag_pipeline.py
-import pytest
-from unittest.mock import AsyncMock, patch
-from app.services.rag_service import RAGService
-
-@pytest.fixture
-async def rag_service():
-    """Create a RAG service with real vector DB but mocked LLM."""
-    service = RAGService(
-        vector_db_url="http://localhost:6333",
-        embedding_model="text-embedding-3-small",
-        llm_model="gpt-4o-mini",
-    )
-    await service.initialize()
-    # Seed test data
-    await service.ingest_documents([
-        {"text": "Our refund policy allows returns within 30 days.", "source": "policy.md"},
-        {"text": "Shipping takes 3-5 business days.", "source": "shipping.md"},
-        {"text": "Customer support hours are 9am-5pm EST.", "source": "support.md"},
-    ])
-    yield service
-    await service.shutdown()
-
-class TestRAGPipeline:
-    @patch("app.services.llm_service.call_llm")
-    async def test_retrieval_returns_relevant_chunks(self, mock_llm, rag_service):
-        """Test that the retriever finds the right documents."""
-        mock_llm.return_value = "Mocked response"
-
-        result = await rag_service.query("What is the refund policy?")
-
-        # Check that retrieved chunks are relevant
-        sources = [s["source"] for s in result.sources]
-        assert "policy.md" in sources
-
-    @patch("app.services.llm_service.call_llm")
-    async def test_irrelevant_query_returns_no_good_matches(self, mock_llm, rag_service):
-        mock_llm.return_value = "I don't have information about that."
-
-        result = await rag_service.query("What is the weather on Mars?")
-
-        # Should have low relevance scores
-        assert all(s["relevance"] < 0.5 for s in result.sources)
-```
-
-```python
-# tests/integration/test_api_endpoints.py
-import pytest
-from httpx import AsyncClient, ASGITransport
-from app.main import app
-
-@pytest.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
-
-class TestAPIEndpoints:
-    async def test_health_endpoint(self, client):
-        response = await client.get("/health")
-        assert response.status_code == 200
-        assert response.json()["status"] == "healthy"
-
-    async def test_chat_endpoint_returns_answer(self, client):
-        response = await client.post("/api/chat", json={
-            "message": "What is the refund policy?",
-            "history": []
-        })
-        assert response.status_code == 200
-        data = response.json()
-        assert "answer" in data
-        assert "sources" in data
-        assert isinstance(data["tokens_used"], int)
-
-    async def test_chat_rejects_empty_message(self, client):
-        response = await client.post("/api/chat", json={
-            "message": "",
-            "history": []
-        })
-        assert response.status_code == 422  # Validation error
-
-    async def test_chat_stream_returns_sse(self, client):
-        response = await client.post("/api/chat/stream", json={
-            "message": "Hello",
-            "history": []
-        })
-        assert response.status_code == 200
-        assert "text/event-stream" in response.headers["content-type"]
-```
-
-### 5.3 Eval Tests (AI-Specific Quality Tests)
-
-Eval tests measure **retrieval and generation quality** using real LLM calls. These are expensive — run them on PRs, not every commit.
-
-```python
-# tests/eval/test_retrieval_quality.py
-import pytest
-import json
-from app.services.rag_service import RAGService
-
-# Load evaluation dataset
-with open("tests/eval/eval_dataset.json") as f:
-    EVAL_DATA = json.load(f)
-
-@pytest.fixture(scope="module")
-async def rag_service():
-    service = RAGService(...)
-    await service.initialize()
-    yield service
-
-class TestRetrievalQuality:
-    @pytest.mark.parametrize("item", EVAL_DATA["retrieval_tests"])
-    async def test_retrieval_finds_relevant_doc(self, rag_service, item):
-        """For each test question, verify the expected document is retrieved."""
-        results = await rag_service.retrieve(item["question"], top_k=5)
-        retrieved_sources = [r["source"] for r in results]
-
-        # The expected source must be in the top 5
-        assert item["expected_source"] in retrieved_sources, \
-            f"Expected '{item['expected_source']}' in results for: {item['question']}"
-
-    async def test_overall_recall_at_5(self, rag_service):
-        """Measure recall@5 across the entire eval set."""
-        hits = 0
-        total = len(EVAL_DATA["retrieval_tests"])
-
-        for item in EVAL_DATA["retrieval_tests"]:
-            results = await rag_service.retrieve(item["question"], top_k=5)
-            retrieved_sources = [r["source"] for r in results]
-            if item["expected_source"] in retrieved_sources:
-                hits += 1
-
-        recall = hits / total
-        assert recall >= 0.80, f"Recall@5 is {recall:.2f}, expected >= 0.80"
-
-    async def test_mrr(self, rag_service):
-        """Mean Reciprocal Rank — is the best result ranked first?"""
-        reciprocal_ranks = []
-
-        for item in EVAL_DATA["retrieval_tests"]:
-            results = await rag_service.retrieve(item["question"], top_k=5)
-            for rank, r in enumerate(results, 1):
-                if r["source"] == item["expected_source"]:
-                    reciprocal_ranks.append(1.0 / rank)
-                    break
-            else:
-                reciprocal_ranks.append(0.0)
-
-        mrr = sum(reciprocal_ranks) / len(reciprocal_ranks)
-        assert mrr >= 0.65, f"MRR is {mrr:.2f}, expected >= 0.65"
-```
-
-```python
-# tests/eval/test_generation_quality.py
-import pytest
-from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_precision
-
-class TestGenerationQuality:
-    async def test_faithfulness(self, rag_service):
-        """Test that answers are grounded in the retrieved context (no hallucinations)."""
-        results = []
-        for item in EVAL_DATA["generation_tests"]:
-            response = await rag_service.query(item["question"])
-            results.append({
-                "question": item["question"],
-                "answer": response.answer,
-                "contexts": [s["text"] for s in response.sources],
-            })
-
-        # Use RAGAS to evaluate
-        scores = evaluate(results, metrics=[faithfulness])
-        avg_faithfulness = scores["faithfulness"].mean()
-        assert avg_faithfulness >= 0.85, \
-            f"Faithfulness is {avg_faithfulness:.2f}, expected >= 0.85"
-
-    async def test_answer_relevancy(self, rag_service):
-        """Test that answers actually address the question asked."""
-        results = []
-        for item in EVAL_DATA["generation_tests"]:
-            response = await rag_service.query(item["question"])
-            results.append({
-                "question": item["question"],
-                "answer": response.answer,
-                "contexts": [s["text"] for s in response.sources],
-            })
-
-        scores = evaluate(results, metrics=[answer_relevancy])
-        avg_relevancy = scores["answer_relevancy"].mean()
-        assert avg_relevancy >= 0.80, \
-            f"Answer relevancy is {avg_relevancy:.2f}, expected >= 0.80"
-
-    async def test_no_hallucination_on_unknown_question(self, rag_service):
-        """When asked about something not in the knowledge base, should say 'I don't know'."""
-        response = await rag_service.query("What is the GDP of Jupiter?")
-        refusal_phrases = ["don't have", "no information", "not sure", "cannot find"]
-        assert any(phrase in response.answer.lower() for phrase in refusal_phrases), \
-            f"Expected refusal, got: {response.answer}"
-```
-
-### 5.4 The Eval Dataset
-
-```json
-// tests/eval/eval_dataset.json
-{
-  "retrieval_tests": [
-    {
-      "question": "What is the refund policy?",
-      "expected_source": "policies/refund-policy.md",
-      "expected_keywords": ["30 days", "refund"]
-    },
-    {
-      "question": "How do I reset my password?",
-      "expected_source": "support/account-help.md",
-      "expected_keywords": ["password", "reset", "email"]
-    },
-    {
-      "question": "What programming languages does the API support?",
-      "expected_source": "docs/api-reference.md",
-      "expected_keywords": ["Python", "JavaScript", "SDK"]
-    }
-  ],
-  "generation_tests": [
-    {
-      "question": "What is the refund policy?",
-      "expected_answer_contains": ["30 days"],
-      "expected_answer_not_contains": ["60 days", "no refunds"]
-    },
-    {
-      "question": "How do I contact support?",
-      "expected_answer_contains": ["email", "support@"],
-      "expected_answer_not_contains": []
-    }
-  ]
-}
-```
-
-**How to build your eval dataset:**
-1. Start with 20-50 real user questions (or make them up based on your docs)
-2. Manually label the correct source document for each
-3. Write expected keywords/phrases for answers
-4. Grow the dataset over time — add edge cases as you find them
-5. **Golden rule: 50 well-curated examples > 500 sloppy ones**
-
-### 5.5 Load Testing
-
-```python
-# scripts/load_test.py
-# Using locust for load testing
-from locust import HttpUser, task, between
-
-class AIAppUser(HttpUser):
-    wait_time = between(1, 3)
-
-    @task(10)
-    def chat(self):
-        self.client.post("/api/chat", json={
-            "message": "What is the refund policy?",
-            "history": []
-        })
-
-    @task(1)
-    def health_check(self):
-        self.client.get("/health")
-```
-
-```bash
-# Run load test: 50 concurrent users for 2 minutes
-pip install locust
-locust -f scripts/load_test.py --host http://localhost:8000 \
-  --users 50 --spawn-rate 5 --run-time 2m --headless
-```
-
-**Key metrics to measure:**
-| Metric | Target | What It Tells You |
-|--------|--------|-------------------|
-| P50 latency | <2s | Typical user experience |
-| P99 latency | <5s | Worst-case experience |
-| Throughput | >50 QPS | Can you handle the load? |
-| Error rate | <1% | Is the system stable under load? |
-| CPU/Memory | <80% | Do you have headroom? |
-
-### 5.6 Shadow Testing (Before Swapping Models)
-
-When switching models (e.g., GPT-4o-mini → Claude Haiku), run both in parallel:
-
-```python
-# Shadow test: run new model alongside production, compare results
-async def shadow_test(question: str):
-    # Run both models
-    prod_response = await llm_call(model="gpt-4o-mini", prompt=question)
-    shadow_response = await llm_call(model="claude-haiku", prompt=question)
-
-    # Log both for comparison (don't serve shadow to user)
-    log_comparison({
-        "question": question,
-        "prod_answer": prod_response,
-        "shadow_answer": shadow_response,
-        "prod_latency": prod_response.latency,
-        "shadow_latency": shadow_response.latency,
-        "prod_tokens": prod_response.tokens,
-        "shadow_tokens": shadow_response.tokens,
-    })
-
-    # Serve only production response to user
-    return prod_response
-```
-
-### 5.7 Testing Checklist
+### Layer 1: Unit Tests
+
+**What they test:** Individual functions in isolation, with no external dependencies.
+
+**What to unit test in an AI app:**
+
+| Component | What to Test | Example |
+|-----------|-------------|---------|
+| Chunking | Correct split sizes, overlap works, handles empty text | "Does `chunk_text('long text', 512)` return chunks under 512 tokens?" |
+| Prompt templates | Variables are inserted correctly, output format is right | "Does `build_prompt(question, context)` include both?" |
+| Schema validation | Pydantic models accept valid input, reject invalid | "Does `ChatRequest(message='')` raise a validation error?" |
+| Metadata extraction | Title, author, date parsed correctly | "Does `extract_metadata(doc)` return the expected fields?" |
+| Cost calculation | Token counts → dollar amounts are correct | "Does `calculate_cost('gpt-4o', 1000, 500)` return $0.0075?" |
+| Text preprocessing | Cleaning, normalization work | "Does `clean_text(html_string)` strip tags correctly?" |
+
+**Key principle:** Unit tests must be **fast** (no API calls, no database, no network) and **deterministic** (same input always gives same output). You should have 50-200 of these. They run in seconds.
+
+### Layer 2: Integration Tests
+
+**What they test:** Multiple components working together.
+
+**Strategy:** Use **real** infrastructure services (vector DB, Redis) but **mock** expensive LLM API calls.
+
+| Test | Real Services | Mocked Services | What It Verifies |
+|------|--------------|----------------|-----------------|
+| RAG pipeline | Vector DB (Qdrant) | LLM (OpenAI) | Query → embedding → retrieval → re-ranking works end-to-end |
+| API endpoints | FastAPI server | LLM | HTTP requests return correct status codes and response shapes |
+| Ingestion pipeline | Vector DB, file parsers | — | Documents are parsed, chunked, embedded, and stored correctly |
+| Cache layer | Redis | LLM | Cache hits return cached response, cache misses call the pipeline |
+
+**Why mock the LLM?** LLM API calls are:
+- **Slow** (1-3 seconds each)
+- **Expensive** ($0.001-0.01 per call)
+- **Non-deterministic** (same prompt can give different answers)
+- **Flaky** (API might be down or rate-limited)
+
+By mocking the LLM, your integration tests run in 30 seconds instead of 10 minutes, cost $0 instead of $5, and never fail due to network issues.
+
+### Layer 3: Eval Tests (AI-Specific)
+
+**What they test:** The actual quality of your AI system's outputs.
+
+This is what makes AI testing different from traditional software testing. You're not checking "does the function return the right type?" — you're checking "is the answer actually good?"
+
+**Two categories:**
+
+**A) Retrieval Evaluation** — Does the system find the right documents?
+
+| Metric | What It Measures | How to Calculate | Good Score |
+|--------|-----------------|-----------------|------------|
+| **Recall@K** | "Is the correct doc in the top K results?" | (# of correct docs in top K) / (# of total correct docs) | >= 0.80 |
+| **MRR** (Mean Reciprocal Rank) | "How high is the correct doc ranked?" | Average of 1/rank for the first correct result | >= 0.65 |
+| **NDCG@K** | "Are results ordered by relevance?" | Normalized score comparing actual vs ideal ranking | >= 0.60 |
+| **Context Precision** | "What % of retrieved chunks are actually relevant?" | (# relevant chunks) / (# total retrieved chunks) | >= 0.70 |
+
+**B) Generation Evaluation** — Is the answer good?
+
+| Metric | What It Measures | How to Calculate | Good Score |
+|--------|-----------------|-----------------|------------|
+| **Faithfulness** | "Is the answer grounded in the retrieved context?" | LLM-as-judge checks each claim against the context | >= 0.85 |
+| **Answer Relevance** | "Does the answer address the question?" | LLM-as-judge scores relevance | >= 0.80 |
+| **Hallucination Rate** | "Did the AI make things up?" | % of claims not supported by context | <= 5% |
+| **Completeness** | "Did it answer the full question?" | Manual or LLM-as-judge | >= 0.70 |
+
+**Tools for eval:**
+- **RAGAS**: Open-source framework for RAG evaluation (faithfulness, relevance, precision, recall)
+- **DeepEval**: Broader eval framework with hallucination detection
+- **LangSmith**: Tracing + eval from LangChain
+- **Custom**: Your own eval script comparing answers against expected keywords/sources
+
+**The Eval Dataset — Your Most Important Asset**
+
+Your eval dataset is a collection of question-answer-source triples:
 
 ```
-BEFORE EVERY PR:
-  ✅ Unit tests pass (pytest tests/unit/)
-  ✅ Linting passes (ruff check .)
-  ✅ Type checking passes (mypy app/)
-  ✅ Docker builds successfully
-
-BEFORE MERGING TO MAIN:
-  ✅ Integration tests pass
-  ✅ Eval tests pass (retrieval recall >= 0.80, faithfulness >= 0.85)
-  ✅ No new security vulnerabilities (pip audit)
-
-BEFORE MODEL CHANGES:
-  ✅ Eval comparison: new model >= current model on all metrics
-  ✅ Cost estimate is within budget
-  ✅ Latency is within bounds
-  ✅ Shadow test results reviewed
+Question: "What is our refund policy?"
+Expected Source: "policies/refund-policy.md"
+Expected Answer Contains: ["30 days", "full refund"]
+Expected Answer Does NOT Contain: ["no refunds", "60 days"]
 ```
+
+**How to build one:**
+1. Start with 50 real or realistic questions
+2. For each question, manually identify the correct source document
+3. Write key phrases that should (and should not) appear in the answer
+4. Include 5-10 "unanswerable" questions (the AI should say "I don't know")
+5. Include edge cases: ambiguous questions, multi-part questions, questions requiring multiple documents
+
+**Golden rule:** 50 well-curated examples > 500 sloppy ones. Quality over quantity. Add to it over time as you find failure cases.
+
+### Layer 4: E2E and Manual Tests
+
+For AI apps, automated eval catches most issues. But some things require human judgment:
+
+- **Tone and style**: Is the response professional? Too wordy? Too terse?
+- **Edge cases**: What happens with adversarial inputs? Prompt injection attempts?
+- **User experience**: Is the streaming smooth? Do citations link to the right place?
+- **Cultural sensitivity**: Are responses appropriate across cultures and contexts?
+
+These are best done as part of a pre-release review, not on every PR.
+
+### Load Testing — Can It Handle Real Traffic?
+
+Before going live, you need to know: **how many concurrent users can this handle?**
+
+**What to measure:**
+
+| Metric | Target | Why |
+|--------|--------|-----|
+| P50 latency | < 2s | Typical user experience |
+| P99 latency | < 5s | Worst-case experience — if P99 is 30s, 1 in 100 users waits 30 seconds |
+| Max throughput | > expected peak QPS | Can you handle Black Friday? |
+| Error rate under load | < 1% | Does the system degrade gracefully or crash? |
+| Memory/CPU at peak | < 80% | Do you have headroom for spikes? |
+
+Use a load testing tool (Locust, k6, or Artillery) to simulate concurrent users sending realistic queries. Start at 10 users, ramp to 100, and observe where things break.
+
+**Common AI-specific bottlenecks:**
+- LLM API rate limits (OpenAI: 10K RPM on Tier 3)
+- Vector DB connection pool exhaustion
+- Memory growth from loading too many documents
+- Embedding API throughput (batching helps)
+
+### Shadow Testing — Safe Model Swaps
+
+When you want to switch models (e.g., `gpt-4o-mini` → `claude-haiku`), shadow testing lets you compare safely:
+
+1. Both models process every request
+2. Only the **current production model** response is served to users
+3. The **shadow model** response is logged but never shown
+4. After a few days, compare: quality, latency, cost
+5. If the shadow model is equal or better → promote it
+
+This eliminates the risk of switching models — you have real data before committing.
 
 ---
 
-## 6. Monitoring & Observability in Production
+## 7. Deployment Patterns for AI
 
-### What to Monitor for AI Apps
+### Canary Deployments
+
+The safest way to deploy AI changes. Instead of switching 100% of traffic at once:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   MONITORING STACK                               │
-│                                                                  │
-│  INFRASTRUCTURE METRICS (Prometheus + Grafana)                   │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │ CPU /    │  │ Request  │  │ Error    │  │ Pod Count /  │   │
-│  │ Memory   │  │ Latency  │  │ Rate     │  │ Restarts     │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────────┘   │
-│                                                                  │
-│  AI-SPECIFIC METRICS (LangSmith / Custom)                       │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │ Token    │  │ Cache    │  │ Retrieval│  │ User         │   │
-│  │ Usage /  │  │ Hit Rate │  │ Relevance│  │ Satisfaction │   │
-│  │ Cost     │  │          │  │ Score    │  │ (thumbs)     │   │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────────┘   │
-│                                                                  │
-│  LOGGING (structured JSON → centralized log system)             │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Every request logged:                                     │   │
-│  │ {timestamp, request_id, user_id, question, model,        │   │
-│  │  tokens_in, tokens_out, latency_ms, retrieval_count,     │   │
-│  │  cache_hit, cost_usd, sources[], status_code}            │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ALERTING (PagerDuty / Slack)                                   │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │ Alert if:                                                 │   │
-│  │ - Error rate > 5% for 5 minutes                          │   │
-│  │ - P99 latency > 10s for 5 minutes                        │   │
-│  │ - LLM API errors > 10 in 1 minute                        │   │
-│  │ - Daily cost exceeds budget by 20%                        │   │
-│  │ - Retrieval relevance drops below 0.6 (sampled)          │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
+Step 1: Deploy new version alongside old
+Step 2: Route 10% of traffic to new version ("canary")
+Step 3: Monitor for 5-30 minutes
+         - Error rate stable?
+         - Latency within bounds?
+         - AI quality not degraded? (sample eval)
+Step 4a: If healthy → gradually increase to 25% → 50% → 100%
+Step 4b: If unhealthy → roll back to 0% → investigate
 ```
 
-### Structured Logging Example
+**Why canary matters for AI:** A code bug shows up instantly (500 errors). A bad prompt change or model regression might only show up as subtle quality degradation. The canary window gives you time to catch it.
 
-```python
-# app/middleware/logging.py
-import structlog
-import time
-from fastapi import Request
+### Blue-Green Deployments
 
-logger = structlog.get_logger()
+Two identical environments:
 
-async def log_request(request: Request, call_next):
-    start = time.time()
-    request_id = str(uuid4())
-
-    response = await call_next(request)
-
-    duration = time.time() - start
-    logger.info(
-        "request_completed",
-        request_id=request_id,
-        method=request.method,
-        path=request.url.path,
-        status_code=response.status_code,
-        duration_ms=round(duration * 1000, 2),
-        # AI-specific fields added by the RAG service:
-        # tokens_in, tokens_out, model, cache_hit, cost_usd
-    )
-    return response
 ```
+BLUE  (current production) ← All traffic
+GREEN (new version, idle)
+
+1. Deploy new version to GREEN
+2. Run smoke tests against GREEN
+3. Switch load balancer: BLUE → GREEN
+4. GREEN is now production
+5. Keep BLUE running for 30 min (instant rollback if needed)
+```
+
+Simpler than canary but riskier — it's all-or-nothing. Good for small apps. Not recommended for AI apps where quality regression might be subtle.
+
+### Rolling Updates (Kubernetes Default)
+
+Kubernetes replaces pods one at a time:
+
+```
+Old: [Pod1] [Pod2] [Pod3]
+         ↓ replace Pod1
+Mid: [Pod1-new] [Pod2] [Pod3]    ← Pod1 new, health checked, receiving traffic
+         ↓ replace Pod2
+Mid: [Pod1-new] [Pod2-new] [Pod3]
+         ↓ replace Pod3
+New: [Pod1-new] [Pod2-new] [Pod3-new]
+```
+
+Fast and automatic. Good for code changes. For model changes, prefer canary (you need time to evaluate quality, not just health checks).
+
+### Feature Flags for AI
+
+Sometimes you want to test a new prompt, model, or retrieval strategy on a subset of users without deploying new code:
+
+```
+if feature_flag("use_claude_for_complex"):
+    model = "claude-sonnet"
+else:
+    model = "gpt-4o-mini"
+```
+
+Tools: LaunchDarkly, Unleash, or a simple config in your database. Useful for A/B testing different AI strategies.
+
+---
+
+## 8. Monitoring AI in Production
+
+### What's Different About Monitoring AI?
+
+Traditional app monitoring tracks: **Is the server healthy? Are requests succeeding?**
+
+AI monitoring adds: **Is the AI output still good? Are we spending too much?**
+
+### The Three Pillars + AI Metrics
+
+```
+STANDARD INFRASTRUCTURE METRICS:
+  ├── Latency (P50, P95, P99)
+  ├── Error rate (4xx, 5xx)
+  ├── Throughput (requests/sec)
+  ├── CPU / Memory / GPU usage
+  └── Pod restarts / health check failures
+
+AI-SPECIFIC METRICS (what makes AI monitoring unique):
+  ├── Token usage (input + output per request)
+  ├── Cost per request and daily totals
+  ├── Cache hit rate (semantic + exact)
+  ├── Retrieval relevance score (sampled)
+  ├── Hallucination rate (sampled)
+  ├── User feedback (thumbs up/down ratio)
+  ├── Model latency breakdown (embedding vs retrieval vs generation)
+  └── Drift detection (are user queries changing?)
+```
+
+### Structured Logging — What to Log Per Request
+
+Every request should produce a structured (JSON) log entry containing:
+
+| Field | Why |
+|-------|-----|
+| `request_id` | Trace a single request through all components |
+| `user_id` | Understand per-user patterns |
+| `question` | Debug specific failures (careful: may contain PII) |
+| `model` | Know which model was used |
+| `tokens_in` / `tokens_out` | Cost tracking |
+| `latency_ms` | Performance monitoring |
+| `retrieval_count` | How many chunks were used |
+| `cache_hit` | Was this a cached response? |
+| `cost_usd` | Per-request cost |
+| `sources` | Which documents were cited |
+
+**Important: PII in logs.** User queries may contain personal information. Either:
+- Mask PII before logging (using tools like Microsoft Presidio)
+- Log to a restricted system with access controls
+- Don't log the question at all (least useful, but safest)
+
+### LLM Tracing — Understanding the Full Pipeline
+
+Standard logging tells you "this request took 3 seconds." LLM tracing tells you **why**:
+
+```
+Request: "What is our refund policy?"
+├── Query embedding:     45ms   ← fast
+├── Vector search:       12ms   ← fast
+├── Re-ranking:          89ms   ← 60% of retrieval time — optimize here?
+├── Context assembly:    3ms    ← fast
+├── LLM generation:      1,890ms ← 85% of total time (expected for LLM)
+│   ├── Input tokens:    1,234
+│   ├── Output tokens:   187
+│   ├── Model:           gpt-4o
+│   └── Cost:            $0.0043
+├── Guardrail checks:    8ms    ← fast
+└── Total:               2,047ms
+```
+
+Tools: **LangSmith** (from LangChain), **LangFuse** (open-source), **Arize** (ML observability).
+
+### Alerting — When to Wake Someone Up
+
+Not every metric needs an alert. Set up alerts only for conditions that require action:
+
+| Alert | Threshold | Action |
+|-------|-----------|--------|
+| Error rate > 5% for 5 min | Immediate (PagerDuty) | Something is broken — investigate |
+| P99 latency > 10s for 5 min | Immediate | LLM API might be slow, or system overloaded |
+| LLM API errors > 10 in 1 min | Immediate | Switch to fallback model |
+| Daily cost > 120% of budget | Warning (Slack) | Check for traffic spike or misconfiguration |
+| Retrieval relevance < 0.6 (daily sample) | Warning | Possible data quality issue — check recent document updates |
+| User satisfaction < 60% (weekly) | Advisory | Review recent changes to prompts, models, or retrieval |
+
+**Anti-pattern: Alert fatigue.** If you get 20 alerts a day, you'll start ignoring them. Only alert on conditions that are actionable and require immediate attention.
 
 ### Cost Tracking Dashboard
 
-```python
-# Track cost per request
-def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    pricing = {
-        "gpt-4o":        {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
-        "gpt-4o-mini":   {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
-        "claude-sonnet": {"input": 3.00 / 1_000_000, "output": 15.00 / 1_000_000},
-        "claude-haiku":  {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
-    }
-    p = pricing.get(model, pricing["gpt-4o-mini"])
-    return input_tokens * p["input"] + output_tokens * p["output"]
+AI apps can have runaway costs. A simple dashboard should show:
+
+- **Daily spend** vs budget (bar chart with a red line at the budget)
+- **Cost per request** over time (catch sudden increases)
+- **Cost breakdown by model** (which model is the most expensive?)
+- **Cache savings** (how much money is the cache saving?)
+- **Projected monthly cost** based on current usage trend
+
+### Drift Detection — When the World Changes
+
+Your AI system was designed for specific types of queries. But user behavior changes:
+
+- **Data drift**: Users start asking different kinds of questions than what you tested for
+- **Concept drift**: The answers to existing questions change (policy updates, product changes)
+- **Model drift**: The LLM provider changes something (model update, behavior change)
+
+**How to detect drift:**
+1. Log user queries and periodically cluster them — are new clusters appearing?
+2. Run your eval suite weekly against production queries (sampled)
+3. Track retrieval relevance scores — a slow decline signals something has changed
+4. Monitor user feedback trends — sudden dip = something broke
+
+---
+
+## 9. Security for AI Applications
+
+### AI-Specific Security Threats
+
+| Threat | What Happens | Defense |
+|--------|-------------|---------|
+| **Prompt injection** | User crafts input that overrides system prompt: "Ignore previous instructions and..." | Input validation, prompt sandboxing, LLM-based detection |
+| **Data leakage** | AI reveals information from other users' documents | ACL-aware retrieval, tenant isolation in vector DB |
+| **PII exposure** | AI returns sensitive data (SSN, email) in responses | PII detection on output (Presidio), output filtering |
+| **API key theft** | Attacker gets your OpenAI key from exposed env file or log | Secret manager, never log or commit keys, rotate regularly |
+| **Cost attack** | Malicious user sends thousands of expensive queries | Rate limiting, per-user quotas, cost circuit breaker |
+| **Model abuse** | User uses your AI to generate harmful content | Content policy guardrails, input/output filtering |
+
+### Defense in Depth
+
+```
+Layer 1: INPUT
+  ├── Rate limiting (max requests per user per minute)
+  ├── Input validation (max length, allowed characters)
+  ├── PII detection (scan for SSN, credit cards, etc.)
+  └── Prompt injection detection (classifier or pattern matching)
+
+Layer 2: PROCESSING
+  ├── ACL enforcement (only search docs the user can access)
+  ├── Token budgeting (max_tokens limit per request)
+  ├── Model isolation (no cross-tenant context)
+  └── Timeout enforcement (kill requests after 30s)
+
+Layer 3: OUTPUT
+  ├── PII scanning (remove any PII that slipped through)
+  ├── Content policy check (no harmful, illegal, or off-topic content)
+  ├── Source attribution (only cite documents from the user's search results)
+  └── Response length limit
+
+Layer 4: INFRASTRUCTURE
+  ├── Secrets in secret manager (never in code or env files)
+  ├── HTTPS everywhere
+  ├── Authentication on all endpoints (except /health)
+  ├── Audit logging (who accessed what)
+  └── Network policies (containers can only talk to allowed services)
 ```
 
 ---
 
-## 7. Production Checklist
+## 10. The Production Readiness Checklist
 
-### Pre-Launch Checklist
+### Before Going Live
+
+**Application:**
+- [ ] Health endpoint (`/health`) returns 200
+- [ ] Readiness endpoint (`/ready`) checks all dependencies
+- [ ] All config from environment variables (no hardcoded secrets)
+- [ ] Input validation on every endpoint (Pydantic schemas)
+- [ ] Rate limiting configured per user/API key
+- [ ] Request timeouts set (30s default, 60s for LLM calls)
+- [ ] Graceful shutdown handles in-flight requests
+- [ ] Error responses are informative but don't leak internals
+
+**Docker:**
+- [ ] Non-root user in Dockerfile
+- [ ] `.dockerignore` excludes `.env`, `.git`, `__pycache__`, `venv`, `*.pyc`
+- [ ] Base image version pinned (not `latest`)
+- [ ] Health check instruction present
+- [ ] Image size reasonable (<2 GB for most apps)
+
+**CI/CD:**
+- [ ] Lint + unit tests on every PR
+- [ ] Integration tests on every PR
+- [ ] Eval tests on PRs (with pass/fail thresholds)
+- [ ] Docker build verified in CI
+- [ ] Automated deployment on merge to main
+- [ ] Canary deployment (not all-at-once)
+- [ ] Rollback plan documented and tested
+
+**Testing:**
+- [ ] Unit tests cover: chunking, prompts, schemas, cost calculation, text processing
+- [ ] Integration tests cover: API endpoints, RAG pipeline, cache behavior
+- [ ] Eval dataset with 50+ curated Q&A pairs
+- [ ] Eval gates: retrieval recall >= 0.80, faithfulness >= 0.85, hallucination <= 5%
+- [ ] Load test confirms P99 < 5s at expected peak QPS
+
+**Monitoring:**
+- [ ] Structured JSON logging with request_id, model, tokens, cost
+- [ ] Metrics dashboard: latency, error rate, throughput
+- [ ] AI metrics: token usage, cost/request, cache hit rate
+- [ ] LLM tracing enabled (LangSmith, LangFuse, or custom)
+- [ ] Alerting rules configured (error rate, latency, cost, API failures)
+- [ ] Cost dashboard with daily budget and alerts
+- [ ] User feedback collection (thumbs up/down)
+
+**Security:**
+- [ ] API keys in secret manager
+- [ ] PII detection on inputs and outputs
+- [ ] Prompt injection defense
+- [ ] No sensitive data in logs
+- [ ] HTTPS enforced
+- [ ] Authentication on all non-health endpoints
+- [ ] Rate limiting to prevent cost attacks
+
+**Reliability:**
+- [ ] Auto-scaling configured (min 2 replicas for availability)
+- [ ] LLM API fallback (OpenAI down → switch to Anthropic)
+- [ ] Retry with exponential backoff for transient failures
+- [ ] Circuit breaker for external dependencies
+- [ ] Database/vector DB connection pooling
+
+---
+
+## The Maturity Ladder
+
+Where does your deployment stand?
 
 ```
-APPLICATION
-  □ Health check endpoint (/health) returns 200
-  □ Readiness probe checks all dependencies (/ready)
-  □ Environment variables for all secrets (no hardcoded keys)
-  □ Input validation on all endpoints (Pydantic)
-  □ Rate limiting configured
-  □ CORS configured for production domains only
-  □ Request timeout set (30s default, longer for LLM calls)
-  □ Graceful shutdown handles in-flight requests
+LEVEL 0 — Prototype
+  "I share my ngrok URL with teammates"
+  Code runs on laptop. No CI/CD, tests, or monitoring.
 
-DOCKER
-  □ Non-root user in Dockerfile
-  □ .dockerignore includes .env, .git, __pycache__, venv
-  □ Pinned base image version
-  □ Health check in Dockerfile
-  □ Multi-stage build (if model files are large)
+LEVEL 1 — Containerized
+  "It runs in Docker on a VM"
+  Dockerfile exists. Basic health check. Manual deploys.
 
-CI/CD
-  □ Lint + unit tests run on every PR
-  □ Integration tests run on every PR
-  □ Eval tests run on PRs (with pass/fail gates)
-  □ Docker build verified in CI
-  □ Automated deployment on merge to main
-  □ Canary/staged rollout (not all-at-once)
-  □ Rollback plan documented and tested
-
-TESTING
-  □ Unit tests for: chunking, prompts, schemas, utils
-  □ Integration tests for: API endpoints, RAG pipeline
-  □ Eval tests for: retrieval quality, generation quality
-  □ Eval dataset with 50+ curated question-answer pairs
-  □ Load test confirms P99 < target at expected QPS
-
-MONITORING
-  □ Structured logging (JSON) to centralized system
-  □ Metrics: latency, error rate, token usage, cost
-  □ LLM tracing (LangSmith or equivalent)
-  □ Alerting rules configured
-  □ Cost dashboard with daily/weekly budget alerts
-  □ User feedback collection (thumbs up/down)
-
-SECURITY
-  □ API keys stored in secret manager (not env files)
-  □ PII detection on inputs and outputs
-  □ Prompt injection defense
-  □ No sensitive data in logs
-  □ HTTPS enforced
-  □ Authentication on all non-health endpoints
-
-RELIABILITY
-  □ Auto-scaling configured (min 2, max based on budget)
-  □ LLM API fallback (e.g., OpenAI → Anthropic)
-  □ Retry logic with exponential backoff for API calls
-  □ Circuit breaker for external dependencies
-  □ Database connection pooling
-  □ Cache layer (Redis) for frequent queries
-```
-
-### The Deployment Maturity Ladder
-
-```
-Level 0: YOLO
-  "I run it on my laptop and share the URL with ngrok"
-  → No CI/CD, no tests, no monitoring
-
-Level 1: Containerized
-  "It runs in Docker on a cloud VM"
-  → Dockerfile, basic health check, manual deployment
-
-Level 2: Automated
+LEVEL 2 — Automated
   "CI/CD deploys on push to main"
-  → GitHub Actions, unit tests, auto-deploy to Cloud Run/ECS
+  GitHub Actions for tests + deploy. Auto-deploy to Cloud Run/ECS.
+  Unit and integration tests. Still no AI-specific evaluation.
 
-Level 3: Production-Ready
-  "We have tests, monitoring, and canary deploys"
-  → Eval tests, LLM tracing, structured logging, staged rollouts
+LEVEL 3 — Production-Ready
+  "We test AI quality and deploy with canary"
+  Eval tests with pass/fail gates. Canary deployments.
+  LLM tracing. Structured logging. Cost tracking.
 
-Level 4: Enterprise
-  "We handle failures gracefully and optimize cost"
-  → A/B testing, model routing, cost optimization, disaster recovery
+LEVEL 4 — Enterprise
+  "We optimize cost, run A/B tests, and handle failure gracefully"
+  Model routing by complexity. Shadow testing for model swaps.
+  Automatic drift detection. Disaster recovery plan.
 
-Most AI apps should aim for Level 2-3. Level 4 when you're at scale.
+Most AI apps should target Level 2-3.
+Level 4 when you're spending >$5K/month on AI APIs.
 ```
 
 ---
 
-## Quick Reference: Commands You'll Use Daily
+## Summary: The Key Takeaways
 
-```bash
-# LOCAL DEVELOPMENT
-docker compose up -d                           # Start local stack
-pytest tests/unit/ -v                          # Run unit tests
-pytest tests/integration/ -v                   # Run integration tests
-pytest tests/eval/ -v                          # Run eval tests (uses API)
-ruff check . && ruff format --check .          # Lint and format check
-
-# DOCKER
-docker build -t my-ai-app .                    # Build image
-docker run -p 8000:8000 --env-file .env my-ai-app  # Run container
-docker compose logs -f app                     # View logs
-
-# DEPLOYMENT (GCP Cloud Run)
-gcloud builds submit --tag gcr.io/PROJECT/my-ai-app
-gcloud run deploy my-ai-app --image gcr.io/PROJECT/my-ai-app
-
-# DEPLOYMENT (Kubernetes)
-kubectl apply -f k8s/
-kubectl rollout status deployment/ai-app
-kubectl logs -f deployment/ai-app
-
-# MONITORING
-curl http://localhost:8000/health              # Health check
-curl http://localhost:8000/ready               # Readiness check
-locust -f scripts/load_test.py                 # Load test
-```
+1. **Structure your app** for production from day one — separate config, services, and routes
+2. **Docker** makes "it works on my machine" a thing of the past
+3. **CI/CD for AI** adds eval gates — automated quality checks that block bad deployments
+4. **Test at four layers** — unit (fast, free), integration (mock the LLM), eval (real quality), E2E (human review)
+5. **Your eval dataset is your most valuable asset** — curate 50+ examples and grow it over time
+6. **Deploy with canary** — 10% traffic first, monitor, then promote
+7. **Monitor AI-specific metrics** — tokens, cost, cache hit rate, retrieval quality, user feedback
+8. **Security matters more for AI** — prompt injection, PII leakage, and cost attacks are real threats
+9. **Shadow test model swaps** — run both models in parallel before committing
+10. **Start at Level 2, grow to Level 3** — automated tests + automated deploys covers 90% of needs
