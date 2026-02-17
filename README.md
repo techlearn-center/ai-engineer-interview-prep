@@ -1,6 +1,20 @@
-# AI Engineer Interview Prep - Coding Practice
+# AI Engineer Interview Prep - Coding & System Design Practice
 
 Practice problems for AI/ML engineer coding interviews. Each problem has **tests** so you know immediately if your solution is correct.
+
+## NEW: AI System Design Section
+
+> **Preparing for a system design interview?** The `10_system_design/` section covers designing production AI systems — RAG applications, LLM platforms, ML serving, MLOps pipelines, and more.
+
+| Guide | What's Inside | Lines |
+|-------|--------------|-------|
+| [`LEARN_FIRST.md`](10_system_design/LEARN_FIRST.md) | Complete system design guide: RAG architecture, LLM platforms, ML serving, MLOps, production considerations, trade-offs, interview Q&A | ~1,150 |
+| [`PRACTICE_SCENARIOS.md`](10_system_design/PRACTICE_SCENARIOS.md) | 5 full interview-style walkthroughs: Enterprise RAG chatbot, document processing pipeline, content moderation, multi-tenant LLM gateway, recommendation system | ~1,450 |
+| [`TRADEOFFS_AND_DECISIONS.md`](10_system_design/TRADEOFFS_AND_DECISIONS.md) | Decision guide: RAG vs fine-tuning, vector DB comparison, embedding models, LLM selection, chunking strategies, agent architectures, cost optimization | ~880 |
+
+**Reading order:** LEARN_FIRST.md → PRACTICE_SCENARIOS.md → TRADEOFFS_AND_DECISIONS.md
+
+---
 
 ## Setup
 
@@ -105,6 +119,7 @@ Every topic has a LEARN_FIRST.md that teaches the concepts from scratch before y
 | GCP for AI | `07_gcp_ai_platform/LEARN_FIRST.md` | GCS, BigQuery, Vertex AI, Cloud Run, IAM, architecture |
 | LangChain | `08_langchain/LEARN_FIRST.md` | LangChain, LangGraph, LangSmith - complete zero-to-hero guide |
 | MCP | `09_mcp/LEARN_FIRST.md` | Model Context Protocol - connecting AI to tools and data |
+| **System Design** | `10_system_design/LEARN_FIRST.md` | **RAG systems, LLM platforms, ML serving, MLOps, production AI architecture** |
 
 ## Recommended Order (2-Day Plan)
 
